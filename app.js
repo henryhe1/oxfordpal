@@ -1,5 +1,10 @@
 // ── Oxford Palliative Medicine — Main App ──────────────────────────────────
 
+// ── Config ─────────────────────────────────────────────────────────────────
+// Set this to your Cloudflare Worker URL after deploying worker/worker.js
+// e.g. 'https://oxfordpal-proxy.YOUR-SUBDOMAIN.workers.dev'
+const API_PROXY_URL = 'https://oxfordpal-proxy.hello-henryhe.workers.dev';
+
 const App = (() => {
   let currentSection = null;
   let currentQData = null;
@@ -192,7 +197,10 @@ PAGE: ${s.start}-${s.end}
 Rules: must be answerable from the provided text; clinically relevant; plausible but clearly wrong distractors.`;
 
       try {
-        const res = await fetch('https://api.anthropic.com/v1/messages', {
+        if (!API_PROXY_URL || API_PROXY_URL.includes('YOUR-SUBDOMAIN')) {
+          throw new Error('Proxy not configured. Set API_PROXY_URL in app.js — see README.');
+        }
+        const res = await fetch(API_PROXY_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
