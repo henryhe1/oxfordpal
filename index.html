@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="auto">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Oxford Palliative Medicine — AI Exam & Flashcards</title>
+  <meta name="description" content="AI-powered exam questions and spaced repetition flashcards from the Oxford Textbook of Palliative Medicine, 6th Edition." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ═══ HEADER ═══ -->
+<header id="header">
+  <div class="logo">
+    <div class="logo-mark">📖</div>
+    <div>
+      <div class="logo-name">Oxford Palliative Medicine</div>
+      <div class="logo-sub">AI Exam · 6th Ed · 87 Chapters</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="api-badge" id="api-badge" title="Estimated API calls remaining this reset window">
+      <span class="api-icon">⚡</span>
+      <span id="api-count">–</span>
+      <span class="api-label">calls left</span>
+      <span class="api-reset" id="api-reset"></span>
+    </div>
+    <div class="streak-badge" id="streak-badge" style="display:none">
+      🔥 <span id="streak-num">0</span>
+    </div>
+    <nav class="nav">
+      <button class="nav-btn active" data-view="home">Topics</button>
+      <button class="nav-btn" data-view="due">Study Due <span class="due-badge" id="due-count"></span></button>
+      <button class="nav-btn" data-view="history">History</button>
+      <button class="nav-btn" data-view="settings">Settings</button>
+    </nav>
+    <button class="theme-toggle" id="theme-toggle" title="Toggle light/dark mode" aria-label="Toggle theme">
+      <span class="theme-icon">🌙</span>
+    </button>
+  </div>
+</header>
+
+<!-- ═══ MAIN ═══ -->
+<main id="app">
+
+  <!-- HOME: topic browser -->
+  <div class="view active" id="view-home">
+    <div class="hero">
+      <h1>Master Palliative Medicine</h1>
+      <p class="hero-sub">Oxford Textbook · 6th Edition · 87 Chapters · 1409 Pages</p>
+      <p class="hero-desc">AI exam questions sourced exclusively from the Oxford Textbook of Palliative Medicine. Every question is saved locally for offline review and spaced repetition.</p>
+      <div class="hero-actions">
+        <button class="btn-primary" id="random-btn">▶ Generate Random Question</button>
+        <button class="btn-sec" id="study-due-btn">📚 Study Due Cards</button>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="toolbar">
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input class="search-input" id="search-input" type="text" placeholder="Search topics…" autocomplete="off" />
+      </div>
+      <div class="filter-bar" id="filter-bar"></div>
+    </div>
+    <div class="topic-grid" id="topic-grid"></div>
+  </div>
+
+  <!-- QUIZ: active question -->
+  <div class="view" id="view-quiz">
+    <div id="quiz-loading" class="loading-card" style="display:none">
+      <div class="spinner"></div>
+      <p class="loading-txt">Consulting the Oxford Textbook…</p>
+      <p class="loading-sub" id="loading-chapter"></p>
+    </div>
+    <div id="quiz-error" class="error-card" style="display:none">
+      <span id="error-msg"></span>
+      <button class="btn-sec" style="margin-left:12px" id="retry-btn">Retry</button>
+    </div>
+    <div id="quiz-content" style="display:none">
+      <div class="quiz-card">
+        <div class="topic-tag" id="q-tag"></div>
+        <p class="q-text" id="q-text"></p>
+        <div id="q-options"></div>
+        <p class="hint" id="q-hint">Select an answer to reveal the explanation</p>
+      </div>
+      <div class="ans-card" id="ans-card" style="display:none">
+        <div class="ans-header">
+          <span class="ans-title" id="ans-title"></span>
+          <div class="sr-buttons" id="sr-buttons" style="display:none">
+            <span class="sr-label">Next review:</span>
+            <button class="sr-btn sr-fail" data-rating="1">Again<br><small>Tomorrow</small></button>
+            <button class="sr-btn sr-hard" data-rating="2">Hard<br><small id="sr-hard-days"></small></button>
+            <button class="sr-btn sr-good" data-rating="3">Good<br><small id="sr-good-days"></small></button>
+            <button class="sr-btn sr-easy" data-rating="4">Easy<br><small id="sr-easy-days"></small></button>
+          </div>
+        </div>
+        <p class="explanation" id="ans-explanation"></p>
+        <div class="source-box" id="ans-source"></div>
+        <div class="saved-note" id="saved-note" style="display:none">✓ Saved to your flashcard deck</div>
+      </div>
+      <div class="action-row" id="action-row">
+        <button class="btn-primary" id="next-btn">Next Question →</button>
+        <button class="btn-primary" id="same-topic-btn">Same Topic</button>
+        <button class="btn-sec" id="back-btn">← Topics</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- DUE: spaced repetition study mode -->
+  <div class="view" id="view-due">
+    <div class="section-header">
+      <h2>Study Due Cards</h2>
+      <p class="section-desc" id="due-desc"></p>
+    </div>
+    <div id="due-empty" style="display:none">
+      <div class="empty-state">
+        <div class="empty-icon">🎉</div>
+        <h3>All caught up!</h3>
+        <p>No cards due for review. Come back tomorrow, or generate new questions from any topic.</p>
+        <button class="btn-primary" data-view="home" id="go-topics-btn">Browse Topics</button>
+      </div>
+    </div>
+    <div id="due-content" style="display:none">
+      <div class="due-progress">
+        <div class="due-progress-bar"><div class="due-progress-fill" id="due-progress-fill"></div></div>
+        <span id="due-progress-txt"></span>
+      </div>
+      <div class="quiz-card">
+        <div class="topic-tag" id="due-tag"></div>
+        <p class="q-text" id="due-q-text"></p>
+        <div id="due-options"></div>
+        <p class="hint" id="due-hint">Select an answer to reveal the explanation</p>
+      </div>
+      <div class="ans-card" id="due-ans-card" style="display:none">
+        <div class="ans-header">
+          <span class="ans-title" id="due-ans-title"></span>
+          <div class="sr-buttons">
+            <span class="sr-label">Next review:</span>
+            <button class="sr-btn sr-fail" id="due-sr-1">Again<br><small>Tomorrow</small></button>
+            <button class="sr-btn sr-hard" id="due-sr-2">Hard<br><small id="due-hard-days"></small></button>
+            <button class="sr-btn sr-good" id="due-sr-3">Good<br><small id="due-good-days"></small></button>
+            <button class="sr-btn sr-easy" id="due-sr-4">Easy<br><small id="due-easy-days"></small></button>
+          </div>
+        </div>
+        <p class="explanation" id="due-explanation"></p>
+        <div class="source-box" id="due-source"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- HISTORY: session + saved cards -->
+  <div class="view" id="view-history">
+    <div class="section-header">
+      <h2>Flashcard Deck</h2>
+      <div class="history-tabs">
+        <button class="tab-btn active" data-tab="session">This Session</button>
+        <button class="tab-btn" data-tab="saved">All Saved Cards (<span id="saved-count">0</span>)</button>
+        <button class="tab-btn" data-tab="stats">Stats</button>
+      </div>
+    </div>
+    <div id="tab-session" class="tab-content active">
+      <div class="score-bar" id="score-bar" style="display:none">
+        <span class="score-pct" id="score-pct">0%</span>
+        <div class="score-track"><div class="score-fill" id="score-fill"></div></div>
+        <span id="score-tally">0/0</span>
+      </div>
+      <div id="session-list"><div class="empty-hint">No questions answered yet this session.</div></div>
+    </div>
+    <div id="tab-saved" class="tab-content">
+      <div class="saved-toolbar">
+        <input class="search-input" id="saved-search" type="text" placeholder="Search saved cards…" style="max-width:320px" />
+        <button class="btn-sec" id="export-btn">⬇ Export JSON</button>
+        <button class="btn-sec danger" id="clear-saved-btn">Clear All</button>
+      </div>
+      <div id="saved-list"></div>
+    </div>
+    <div id="tab-stats" class="tab-content">
+      <div class="stats-grid" id="stats-grid"></div>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div class="view" id="view-settings">
+    <div class="section-header">
+      <h2>Settings</h2>
+    </div>
+    <div class="settings-grid">
+      <div class="settings-card">
+        <h3>Theme</h3>
+        <p>Choose your preferred colour scheme.</p>
+        <div class="theme-options">
+          <label class="theme-opt"><input type="radio" name="theme" value="auto" /> System default</label>
+          <label class="theme-opt"><input type="radio" name="theme" value="light" /> Light</label>
+          <label class="theme-opt"><input type="radio" name="theme" value="dark" /> Dark</label>
+        </div>
+      </div>
+      <div class="settings-card">
+        <h3>API Usage Tracking</h3>
+        <p>The app estimates remaining Claude API calls based on a rolling 5-hour window (free plan ≈ 20–40 calls per window). This is an estimate only — Anthropic does not expose a usage API.</p>
+        <button class="btn-sec" id="reset-api-btn">Reset Counter</button>
+      </div>
+      <div class="settings-card">
+        <h3>Spaced Repetition Algorithm</h3>
+        <p>Using SM-2 (SuperMemo 2) algorithm, the same as Anki. Cards are scheduled based on your performance — correct answers push cards further into the future, wrong answers reset to tomorrow.</p>
+        <div class="setting-row">
+          <label>Daily new card limit</label>
+          <input type="number" id="daily-new-limit" min="1" max="50" value="10" class="num-input" />
+        </div>
+        <div class="setting-row">
+          <label>Daily review limit</label>
+          <input type="number" id="daily-review-limit" min="1" max="200" value="50" class="num-input" />
+        </div>
+      </div>
+      <div class="settings-card danger-card">
+        <h3>Data</h3>
+        <p>All data is stored in your browser's localStorage. Clearing it removes all saved cards and progress.</p>
+        <button class="btn-sec danger" id="nuke-btn">⚠ Reset All Data</button>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script src="sections-data.js"></script>
+<script src="sm2.js"></script>
+<script src="store.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
