@@ -1,6 +1,6 @@
 // Oxford Palliative Medicine — Main App
 // Set this to your Cloudflare Worker URL after deploying worker/worker.js
-const API_PROXY_URL = 'https://oxfordpal-proxy.YOUR-SUBDOMAIN.workers.dev';
+const API_PROXY_URL = 'https://oxfordpal-proxy.hello-henryhe.workers.dev';
 
 // Constants
 const FREE_WINDOW_ESTIMATE = 25;
