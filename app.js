@@ -81,27 +81,28 @@ const App = (() => {
 
   // Duplicate detection via tag overlap + substring match
   function isDuplicate(newQ, existingCards) {
-    const newText = newQ.question.toLowerCase();
-    for (const card of existingCards) {
-      if (card.question.toLowerCase() === newText) return true;
-      const newTags = new Set(newQ.tags||[]);
-      const oldTags = new Set(card.tags||[]);
-      if (newTags.size && oldTags.size) {
-        const inter = [...newTags].filter(t=>oldTags.has(t)).length;
-        const union = new Set([...newTags,...oldTags]).size;
-        if (inter/union > SIMILARITY_THRESHOLD) {
-          let max=0, a=newText, b=card.question.toLowerCase();
-          for (let i=0;i<a.length;i++) for (let j=0;j<b.length;j++) {
-            let len=0;
-            while (i+len<a.length&&j+len<b.length&&a[i+len]===b[j+len]) len++;
-            if (len>max) max=len;
-          }
-          if (max > 40) return true;
+  if (!existingCards || existingCards.length === 0) return false;  // first run: nothing is a duplicate
+  const newText = newQ.question.toLowerCase();
+  for (const card of existingCards) {
+    if (card.question.toLowerCase() === newText) return true;
+    const newTags = new Set(newQ.tags||[]);
+    const oldTags = new Set(card.tags||[]);
+    if (newTags.size && oldTags.size) {
+      const inter = [...newTags].filter(t=>oldTags.has(t)).length;
+      const union = new Set([...newTags,...oldTags]).size;
+      if (inter/union > SIMILARITY_THRESHOLD) {
+        let max=0, a=newText, b=card.question.toLowerCase();
+        for (let i=0;i<a.length;i++) for (let j=0;j<b.length;j++) {
+          let len=0;
+          while (i+len<a.length&&j+len<b.length&&a[i+len]===b[j+len]) len++;
+          if (len>max) max=len;
         }
+        if (max > 40) return true;
       }
     }
-    return false;
   }
+  return false;
+}
 
   // Parse batch response with Q1:...Q7: format
   function parseResponse(text) {
