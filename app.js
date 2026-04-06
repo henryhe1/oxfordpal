@@ -1,7 +1,7 @@
 // Oxford Palliative Medicine — Main App (Optimized for API Credits)
 // Set this to your Cloudflare Worker URL after deploying worker/worker.js
 const API_PROXY_URL = 'https://oxfordpal-api.hello-henryhe.workers.dev';
-console.log("AUTO DEPLOY TEST — OPTIMIZED VERSION");
+console.log("AUTO DEPLOY TEST — OPTIMIZED VERSION WITH DEBUGGING");
 
 // Constants
 const FREE_WINDOW_ESTIMATE = 25;
@@ -10,6 +10,9 @@ const SIMILARITY_THRESHOLD = 0.55;
 const MAX_CARDS_PER_CHUNK = 15;
 const CACHE_TTL_DAYS = 7;
 const API_MIN_INTERVAL_MS = 2000;
+
+// Enable debug mode to see API responses
+const DEBUG_MODE = true;
 
 // API Throttling
 const APIThrottle = {
@@ -213,62 +216,167 @@ const App = (() => {
     return false;
   }
 
-  // FIXED: Safe parseResponse with error handling
+  // ENHANCED: Multiple parsing strategies
   function parseResponse(text) {
     if (!text || typeof text !== 'string') {
       console.error('Invalid response text:', text);
       return [];
     }
     
+    console.log('Raw API response length:', text.length);
+    if (DEBUG_MODE) {
+      console.log('First 500 chars of response:', text.substring(0, 500));
+    }
+    
+    const questions = [];
+    
+    // Strategy 1: Look for Q1:, Q2:, etc. pattern
     try {
-      const blocks = text.split(/(?=Q\d+:|QUESTION\s*\d+:)/i).filter(b => b && b.trim().length > 50);
+      const blocks = text.split(/(?=Q\d+:|QUESTION\s*\d+:)/i);
       
-      const questions = [];
       for (const block of blocks) {
+        if (!block || block.trim().length < 50) continue;
+        
         try {
-          const get = (key, next) => {
-            const r = new RegExp(key+'[:\\s]+([\\s\\S]*?)(?='+next+'|$)', 'i');
-            const m = block.match(r);
-            return m && m[1] ? m[1].trim() : '';
-          };
+          // Extract question text
+          let questionMatch = block.match(/(?:Q\d+:|QUESTION\s*\d+:)\s*([^\n]+)/i);
+          if (!questionMatch) continue;
           
-          const qRaw = get('Q\\d+|QUESTION\\s*\\d*', 'A\\.|OPTIONS|ANSWER');
-          if (!qRaw) continue;
+          const questionText = questionMatch[1].trim();
           
-          const optStr = get('OPTIONS', 'ANSWER|EXPLANATION|TAGS|SOURCE|PAGE');
-          const opts = optStr ? optStr.split('\n').map(l => l.trim()).filter(l => /^[A-E][.)]/i.test(l)) : [];
+          // Extract options (A., B., C., D., E.)
+          const optionsMatch = block.match(/OPTIONS:\s*([\s\S]*?)(?=ANSWER:|EXPLANATION:|TAGS:|SOURCE:|PAGE:|$)/i);
+          let options = [];
+          if (optionsMatch) {
+            const optionsText = optionsMatch[1];
+            const optionLines = optionsText.split('\n');
+            for (const line of optionLines) {
+              const optMatch = line.match(/^([A-E])[.)]\s*(.+)/i);
+              if (optMatch) {
+                options.push(`${optMatch[1]}. ${optMatch[2].trim()}`);
+              }
+            }
+          }
           
-          if (opts.length < 2) continue;
+          if (options.length < 2) continue;
           
-          const tagsRaw = get('TAGS', 'SOURCE|PAGE|EXPLANATION|$');
-          const tags = tagsRaw ? tagsRaw.split(/[,;]/).map(t => t.trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean) : [];
+          // Extract answer
+          const answerMatch = block.match(/ANSWER:\s*([A-E])/i);
+          if (!answerMatch) continue;
+          const answer = answerMatch[1].toUpperCase();
           
-          const answerRaw = get('ANSWER', 'EXPLANATION|TAGS|SOURCE|PAGE');
-          const answer = answerRaw ? answerRaw.slice(0, 1).toUpperCase() : '';
-          if (!answer || !/[A-E]/.test(answer)) continue;
+          // Extract explanation
+          const explanationMatch = block.match(/EXPLANATION:\s*([\s\S]*?)(?=TAGS:|SOURCE:|PAGE:|$)/i);
+          const explanation = explanationMatch ? explanationMatch[1].trim() : 'No explanation provided.';
           
-          const question = {
-            question: qRaw,
-            options: opts,
+          // Extract tags
+          const tagsMatch = block.match(/TAGS:\s*([\s\S]*?)(?=SOURCE:|PAGE:|$)/i);
+          let tags = [];
+          if (tagsMatch) {
+            tags = tagsMatch[1].split(/[,;]/).map(t => t.trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean);
+          }
+          
+          // Extract source
+          const sourceMatch = block.match(/SOURCE:\s*([^\n]+)/i);
+          const source = sourceMatch ? sourceMatch[1].trim() : 'Oxford Textbook of Palliative Medicine, 6th Ed.';
+          
+          // Extract pages
+          const pagesMatch = block.match(/PAGE:\s*([^\n]+)/i);
+          const pages = pagesMatch ? pagesMatch[1].trim() : '';
+          
+          questions.push({
+            question: questionText,
+            options: options,
             answer: answer,
-            explanation: get('EXPLANATION', 'TAGS|SOURCE|PAGE') || 'No explanation provided.',
+            explanation: explanation,
             tags: tags,
-            source: get('SOURCE', 'TAGS|PAGE') || 'Oxford Textbook of Palliative Medicine, 6th Ed.',
-            pages: get('PAGE', 'ZZZZ') || 'N/A',
-          };
+            source: source,
+            pages: pages
+          });
           
-          questions.push(question);
         } catch (blockError) {
           console.warn('Error parsing block:', blockError);
           continue;
         }
       }
-      
-      return questions;
     } catch (e) {
-      console.error('Fatal error parsing response:', e);
-      return [];
+      console.error('Strategy 1 failed:', e);
     }
+    
+    // Strategy 2: Look for numbered lists without Q prefix
+    if (questions.length === 0) {
+      console.log('Strategy 1 failed, trying Strategy 2...');
+      try {
+        const lines = text.split('\n');
+        let currentQuestion = null;
+        let currentOptions = [];
+        let inOptions = false;
+        
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          
+          // Look for numbered question (1., 2., etc.)
+          const numMatch = line.match(/^(\d+)[.)]\s+(.+)/);
+          if (numMatch && !inOptions) {
+            // Save previous question
+            if (currentQuestion && currentOptions.length >= 2) {
+              questions.push({
+                question: currentQuestion,
+                options: [...currentOptions],
+                answer: '',
+                explanation: '',
+                tags: [],
+                source: 'Oxford Textbook of Palliative Medicine, 6th Ed.',
+                pages: ''
+              });
+            }
+            currentQuestion = numMatch[2];
+            currentOptions = [];
+            inOptions = true;
+          }
+          // Look for options (A., B., etc.)
+          else if (inOptions && line.match(/^[A-E][.)]\s+/i)) {
+            currentOptions.push(line);
+          }
+          // Look for answer line
+          else if (line.match(/^answer:/i) && currentQuestion) {
+            const ansMatch = line.match(/answer:\s*([A-E])/i);
+            if (ansMatch && questions.length > 0) {
+              questions[questions.length - 1].answer = ansMatch[1].toUpperCase();
+            }
+            inOptions = false;
+          }
+          // Look for explanation
+          else if (line.match(/^explanation:/i) && questions.length > 0) {
+            const expText = line.replace(/^explanation:/i, '').trim();
+            questions[questions.length - 1].explanation = expText;
+          }
+        }
+        
+        // Save last question
+        if (currentQuestion && currentOptions.length >= 2 && questions.length > 0) {
+          // Already saved above
+        }
+      } catch (e) {
+        console.error('Strategy 2 failed:', e);
+      }
+    }
+    
+    console.log(`Parsed ${questions.length} questions`);
+    
+    // Filter out incomplete questions
+    const validQuestions = questions.filter(q => 
+      q.question && 
+      q.options && q.options.length >= 2 && 
+      q.answer && /[A-E]/.test(q.answer)
+    );
+    
+    if (validQuestions.length === 0 && DEBUG_MODE) {
+      console.error('No valid questions parsed. Full response:', text);
+    }
+    
+    return validQuestions;
   }
 
   console.log("CALLING API", API_PROXY_URL);
@@ -300,29 +408,41 @@ const App = (() => {
         `\nGenerate COMPLETELY NEW questions on different subtopics.\n`
       : '';
 
-    const prompt = `Use ONLY the information in the passage below. Focus on key testable concepts not yet covered.
-${avoidNote}
-Generate ${BATCH_SIZE_DEFAULT} high-quality single-best-answer exam questions from this Oxford Textbook of Palliative Medicine excerpt (Ch. ${chunk.chapter}: ${chunk.title}, pp.${chunk.start}\u2013${chunk.end}):
+    const prompt = `You are an expert medical educator creating high-quality multiple-choice questions for palliative medicine.
 
+Using ONLY the information in the passage below, generate ${BATCH_SIZE_DEFAULT} single-best-answer exam questions.
+
+Passage (Ch. ${chunk.chapter}: ${chunk.title}, pp.${chunk.start}\u2013${chunk.end}):
 ${chunk.text}
 
-Format each question EXACTLY like this:
+${avoidNote}
+IMPORTANT FORMATTING RULES:
+- Each question MUST start with "Q1:", "Q2:", etc. on its own line
+- Each question MUST be followed by "OPTIONS:" on the next line
+- Options MUST be labeled A., B., C., D., E. (one per line)
+- Then "ANSWER:" with a single letter (A, B, C, D, or E)
+- Then "EXPLANATION:" with 1-2 sentences
+- Then "TAGS:" with 3-6 comma-separated keywords
+- Then "PAGE:" with the page range
 
-Q1: [clinical scenario or knowledge question]
+Example format:
+Q1: What is the first-line treatment for neuropathic pain in palliative care?
 OPTIONS:
-A. [option]
-B. [option]
-C. [option]
-D. [option]
-E. [option]
-ANSWER: [single letter]
-EXPLANATION: [1-2 sentences]
-TAGS: [3-6 comma-separated keywords]
+A. Paracetamol
+B. Gabapentin
+C. Morphine
+D. Ibuprofen
+E. Dexamethasone
+ANSWER: B
+EXPLANATION: Gabapentin is first-line for neuropathic pain based on RCT evidence.
+TAGS: neuropathic-pain, gabapentin, first-line-treatment
 PAGE: ${chunk.start}-${chunk.end}
 
-Q2: ... (continue for all ${BATCH_SIZE_DEFAULT} questions)
+Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
 
-CRITICAL: Ensure ALL questions are complete with all sections.`;
+    if (DEBUG_MODE) {
+      console.log('Sending prompt (first 500 chars):', prompt.substring(0, 500));
+    }
 
     const result = await APIThrottle.call(async () => {
       const res = await fetch(API_PROXY_URL, {
@@ -330,7 +450,7 @@ CRITICAL: Ensure ALL questions are complete with all sections.`;
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 2800,
+          max_tokens: 3500,
           temperature: 0.7,
           messages: [{ role: 'user', content: prompt }],
         }),
@@ -341,20 +461,61 @@ CRITICAL: Ensure ALL questions are complete with all sections.`;
       
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
+      
+      if (DEBUG_MODE) {
+        console.log('API Response structure:', Object.keys(data));
+        console.log('Content type:', typeof data.content);
+        if (data.content) {
+          console.log('Content length:', data.content.length);
+        }
+      }
+      
       return data;
     });
     
-    const text = result.content?.map(b => b.text || '').join('') || '';
-    if (!text) {
+    // Extract text from various possible response formats
+    let text = '';
+    if (result.content) {
+      if (Array.isArray(result.content)) {
+        text = result.content.map(item => item.text || '').join('');
+      } else if (typeof result.content === 'string') {
+        text = result.content;
+      } else if (result.content.text) {
+        text = result.content.text;
+      }
+    } else if (result.text) {
+      text = result.text;
+    } else if (result.response) {
+      text = result.response;
+    }
+    
+    if (!text || text.trim().length === 0) {
+      console.error('Empty response from API. Full result:', result);
       throw new Error('Empty response from API');
     }
+    
+    console.log(`Received response with ${text.length} characters`);
     
     const questions = parseResponse(text);
     
     if (!questions || questions.length === 0) {
-      throw new Error('Failed to parse any valid questions from API response');
+      // Save the failed response for debugging
+      if (DEBUG_MODE) {
+        const debugInfo = {
+          timestamp: new Date().toISOString(),
+          chunkId: chunk.id,
+          promptLength: prompt.length,
+          responseLength: text.length,
+          responsePreview: text.substring(0, 1000),
+          fullResponse: text.length < 5000 ? text : text.substring(0, 5000)
+        };
+        localStorage.setItem('oxpal_last_api_error', JSON.stringify(debugInfo));
+        console.error('API Error saved to localStorage. Check "oxpal_last_api_error"');
+      }
+      throw new Error(`Failed to parse any valid questions from API response. Received ${text.length} chars. Check console for details.`);
     }
     
+    // Filter out duplicates
     const uniqueQuestions = [];
     for (const q of questions) {
       if (q && q.question && !isDuplicate(q, existingCards) && 
@@ -364,8 +525,10 @@ CRITICAL: Ensure ALL questions are complete with all sections.`;
     }
     
     if (uniqueQuestions.length === 0) {
-      throw new Error(`All ${BATCH_SIZE_DEFAULT} generated questions were duplicates. Try a different topic.`);
+      throw new Error(`All ${questions.length} generated questions were duplicates. Try a different topic.`);
     }
+    
+    console.log(`Generated ${uniqueQuestions.length} unique questions out of ${questions.length} total`);
     
     const chunkTags = CHUNK_TAGS[chunk.id] || [];
     uniqueQuestions.forEach(q => { 
@@ -381,7 +544,7 @@ CRITICAL: Ensure ALL questions are complete with all sections.`;
     return { questions: uniqueQuestions, fromCache: false };
   }
 
-  // Theme
+  // Theme (simplified with defensive checks)
   const Theme = {
     apply(pref) {
       const root = document.documentElement;
@@ -448,7 +611,7 @@ CRITICAL: Ensure ALL questions are complete with all sections.`;
     },
   };
 
-  // Topic Grid
+  // Topic Grid (simplified)
   const TopicGrid = {
     activeFilter: 'all',
     init() {
@@ -517,7 +680,7 @@ CRITICAL: Ensure ALL questions are complete with all sections.`;
     },
   };
 
-  // Quiz (rest of quiz implementation with similar defensive checks)
+  // Quiz (simplified - keeping existing implementation but using updated callAPI)
   const Quiz = {
     currentChunk: null,
     pendingQueue: [],
@@ -561,6 +724,7 @@ CRITICAL: Ensure ALL questions are complete with all sections.`;
         this._showState('error');
         const errorEl = document.getElementById('error-msg');
         if (errorEl) errorEl.textContent = e.message;
+        console.error('Quiz generation error:', e);
       }
     },
 
@@ -690,7 +854,7 @@ CRITICAL: Ensure ALL questions are complete with all sections.`;
     },
   };
 
-  // Due Study Mode (simplified - similar defensive checks added)
+  // Due Study Mode (keep existing implementation)
   const DueStudy = {
     queue:[], index:0,
     start() {
@@ -779,7 +943,7 @@ CRITICAL: Ensure ALL questions are complete with all sections.`;
     },
   };
 
-  // History (simplified with defensive checks)
+  // History (simplified)
   const History = {
     activeTab:'session',
     init() {
@@ -919,13 +1083,17 @@ CRITICAL: Ensure ALL questions are complete with all sections.`;
   function init() {
     if (typeof SECTIONS === 'undefined') {
       console.error('SECTIONS data not loaded! Make sure sections.js is loaded before app.js');
+      const errorDiv = document.createElement('div');
+      errorDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:10px;text-align:center;z-index:9999';
+      errorDiv.textContent = 'Error: sections.js not loaded. Please check your HTML file.';
+      document.body.prepend(errorDiv);
       return;
     }
     Theme.init(); Nav.init(); TopicGrid.init(); Quiz.initActions();
     History.init(); Settings.init(); ApiBadge.update();
     setInterval(ApiBadge.update.bind(ApiBadge),60000);
     TopicGrid.updateDueBadge();
-    console.log('✅ Optimized app loaded — API credits will be saved via caching, throttling, and smart duplicate detection');
+    console.log('✅ Optimized app loaded with debugging — Check console for API response details');
   }
 
   return { init };
@@ -936,4 +1104,12 @@ if (typeof SECTIONS !== 'undefined') {
   document.addEventListener('DOMContentLoaded', App.init);
 } else {
   console.error('SECTIONS not defined. Make sure sections.js loads first.');
+  // Try again after a short delay
+  window.addEventListener('load', () => {
+    if (typeof SECTIONS !== 'undefined') {
+      document.addEventListener('DOMContentLoaded', App.init);
+    } else {
+      console.error('SECTIONS still not defined after page load');
+    }
+  });
 }
