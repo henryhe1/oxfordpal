@@ -390,3 +390,13 @@ body {
   .nav-btn { padding: 5px 8px; font-size: 11px; }
   .api-badge { display: none; }
 }
+
+/* ── Tag pills ──────────────────────────────────────────────────────────────── */
+.tag-row { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.tag-pill {
+  background: var(--accent-bg); border: 1px solid var(--accent-border);
+  color: var(--accent); padding: 1px 7px; border-radius: 10px;
+  font-size: 10px; font-family: var(--font-ui); letter-spacing: 0.03em;
+}
+.cached-dot { color: #4466cc; font-size: 10px; }
+.weak-pct { color: var(--red-text); font-weight: 500; }
