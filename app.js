@@ -137,36 +137,80 @@ const App = (() => {
     const cached = Store.questionCache.get(chunk.id);
     if (cached && cached.length > 0) return { questions: cached, fromCache: true };
 
+    // Check if we already have enough cards for this chunk
+    const existingCards = Store.cards.forChunk(chunk.id);
+    if (existingCards.length >= 15) { // Configurable threshold
+        throw new Error(`Chunk ${chunk.id} already has ${existingCards.length} cards. Use due study instead.`);
+    }
+
     if (!API_PROXY_URL || API_PROXY_URL.includes('YOUR-SUBDOMAIN'))
       throw new Error('Proxy not configured. Set API_PROXY_URL in app.js');
 
-    const existingQs = Store.cards.forChunk(chunk.id).map(c=>c.question);
-    const avoidNote = existingQs.length
-      ? '\nAVOID duplicating these existing questions:\n'+existingQs.slice(0,5).map((q,i)=>`${i+1}. ${q.slice(0,80)}`).join('\n')+'\n'
-      : '';
+    // const existingQs = Store.cards.forChunk(chunk.id).map(c=>c.question);
+    // const avoidNote = existingQs.length
+    //   ? '\nAVOID duplicating these existing questions:\n'+existingQs.slice(0,5).map((q,i)=>`${i+1}. ${q.slice(0,80)}`).join('\n')+'\n'
+    //   : '';
 
-    const prompt = `Use ONLY the information in the passage below. Focus on key testable concepts, not trivial details.${avoidNote}
-Generate ${BATCH_SIZE_DEFAULT} high-quality single-best-answer exam questions from this Oxford Textbook of Palliative Medicine excerpt (Ch. ${chunk.chapter}: ${chunk.title}, pp.${chunk.start}\u2013${chunk.end}):
+    // IMPROVED: Send more specific avoid list with semantic context
+    const existingQuestions = existingCards.map(c => c.question);
+    const avoidNote = existingQuestions.length
+        ? `\nIMPORTANT: The following ${existingQuestions.length} questions already exist for this section. DO NOT generate duplicates or similar questions:\n` + 
+          existingQuestions.slice(0, 8).map((q, i) => `${i+1}. ${q.slice(0, 100)}`).join('\n') +
+          `\nGenerate COMPLETELY NEW questions on different subtopics.\n`
+        : '';  
 
-${chunk.text}
+//     const prompt = `Use ONLY the information in the passage below. Focus on key testable concepts, not trivial details.${avoidNote}
+// Generate ${BATCH_SIZE_DEFAULT} high-quality single-best-answer exam questions from this Oxford Textbook of Palliative Medicine excerpt (Ch. ${chunk.chapter}: ${chunk.title}, pp.${chunk.start}\u2013${chunk.end}):
 
-Format each question EXACTLY like this (repeat ${BATCH_SIZE_DEFAULT} times):
+// ${chunk.text}
 
-Q1: [clinical scenario or knowledge question]
-OPTIONS:
-A. [option]
-B. [option]
-C. [option]
-D. [option]
-E. [option]
-ANSWER: [single letter]
-EXPLANATION: [1-2 sentences: why correct, why key distractors wrong]
-TAGS: [3-6 comma-separated clinical keywords]
-PAGE: ${chunk.start}-${chunk.end}
+// Format each question EXACTLY like this (repeat ${BATCH_SIZE_DEFAULT} times):
 
-Q2: ...
+// Q1: [clinical scenario or knowledge question]
+// OPTIONS:
+// A. [option]
+// B. [option]
+// C. [option]
+// D. [option]
+// E. [option]
+// ANSWER: [single letter]
+// EXPLANATION: [1-2 sentences: why correct, why key distractors wrong]
+// TAGS: [3-6 comma-separated clinical keywords]
+// PAGE: ${chunk.start}-${chunk.end}
 
-Rules: all answerable from passage; vary question types; plausible but clearly wrong distractors.`;
+// Q2: ...
+
+// Rules: all answerable from passage; vary question types; plausible but clearly wrong distractors.`;
+
+
+    const prompt = `Use ONLY the information in the passage below. Focus on key testable concepts not yet covered.
+    ${avoidNote}
+    Generate ${BATCH_SIZE_DEFAULT} high-quality single-best-answer exam questions from this Oxford Textbook of Palliative Medicine excerpt (Ch. ${chunk.chapter}: ${chunk.title}, pp.${chunk.start}\u2013${chunk.end}):
+
+    ${chunk.text}
+
+    Format each question EXACTLY like this (repeat ${BATCH_SIZE_DEFAULT} times):
+
+    Q1: [clinical scenario or knowledge question]
+    OPTIONS:
+    A. [option]
+    B. [option]
+    C. [option]
+    D. [option]
+    E. [option]
+    ANSWER: [single letter]
+    EXPLANATION: [1-2 sentences: why correct, why key distractors wrong]
+    TAGS: [3-6 comma-separated clinical keywords]
+    PAGE: ${chunk.start}-${chunk.end}
+
+    Q2: ...
+
+    Rules: 
+    - ALL questions must be answerable from passage
+    - Vary question types (diagnosis, management, mechanism, ethics)
+    - Create plausible but clearly wrong distractors
+    - AVOID topics already covered in existing questions above`;
+
 
     const res = await fetch(API_PROXY_URL, {
       method: 'POST',
@@ -180,13 +224,34 @@ Rules: all answerable from passage; vary question types; plausible but clearly w
     });
     Store.api.recordCall();
     ApiBadge.update();
+
     const data = await res.json();
     if (data.error) throw new Error(data.error.message);
     const text = data.content.map(b=>b.text||'').join('');
     const questions = parseResponse(text);
+
+    // IMPROVED: More aggressive duplicate filtering
+    const uniqueQuestions = [];
+    for (const q of questions) {
+        if (!isDuplicate(q, existingCards) && 
+            !uniqueQuestions.some(uq => uq.question === q.question)) {
+            uniqueQuestions.push(q);
+        }
+    }
+    
+    if (uniqueQuestions.length === 0) {
+        throw new Error(`All ${BATCH_SIZE_DEFAULT} generated questions were duplicates. Try a different topic.`);
+    }
+    
+    if (uniqueQuestions.length < BATCH_SIZE_DEFAULT * 0.5) {
+        console.warn(`Only generated ${uniqueQuestions.length}/${BATCH_SIZE_DEFAULT} unique questions`);
+    }
+
     const chunkTags = CHUNK_TAGS[chunk.id]||[];
-    questions.forEach(q => { q.tags = [...new Set([...q.tags,...chunkTags])]; });
-    Store.questionCache.set(chunk.id, questions);
+    questions.forEach(q => { 
+      q.tags = [...new Set([...q.tags,...chunkTags])]; });
+    
+      Store.questionCache.set(chunk.id, questions);
     return { questions, fromCache: false };
   }
 
