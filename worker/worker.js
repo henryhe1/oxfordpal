@@ -10,6 +10,7 @@
  *   - Returns the response with CORS headers
  */
 
+return new Response("HELLO FROM WORKER", { status: 200 });
 const ALLOWED_ORIGIN = 'https://henryhe.me';  // change if needed
 const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
 
