@@ -99,17 +99,16 @@ body {
 }
 
 .icon-btn {
-  background: var(--bg-secondary);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 1.1rem;
+  padding: 5px 12px;
+  border-radius: 6px;
+  border: none;
   cursor: pointer;
-  transition: all 0.2s ease;
-  color: var(--text-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  font-size: 12px;
+  font-family: var(--font-ui);
+  background: transparent;
+  color: var(--text3);
+  transition: all 0.15s;
+  white-space: nowrap;
 }
 
 .icon-btn:hover {
@@ -186,6 +185,7 @@ body {
     order: 3;
   }
 }
+
 
 /* Nav */
 .nav { display: flex; gap: 3px; }
