@@ -437,6 +437,24 @@ const App = (() => {
 
   console.log("CALLING API", API_PROXY_URL);
 
+  // Add this temporary debug function to see the raw API response
+  function debugAPIResponse(text, chunkId) {
+  console.log(`=== DEBUG: API Response for ${chunkId} ===`);
+  console.log('Raw response length:', text.length);
+  console.log('First 1000 chars:', text.substring(0, 1000));
+  console.log('Last 500 chars:', text.substring(text.length - 500));
+  console.log('Contains "Q1":', text.includes('Q1'));
+  console.log('Contains "QUESTION":', text.includes('QUESTION'));
+  console.log('Contains "OPTIONS":', text.includes('OPTIONS'));
+  
+  // Save to localStorage for inspection
+  localStorage.setItem('oxpal_debug_response', text);
+  console.log('Full response saved to localStorage key: oxpal_debug_response');
+  
+  return text;
+}
+
+
   async function callAPI(chunk) {
     if (!chunk || !chunk.id) {
       throw new Error('Invalid chunk provided');
