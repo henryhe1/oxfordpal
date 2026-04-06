@@ -129,6 +129,8 @@ const App = (() => {
     }).filter(q=>q.question&&q.options.length>=2&&q.answer);
   }
 
+  console.log("CALLING API", API_PROXY_URL);
+
   // API call with cache check
   async function callAPI(chunk) {
     const cached = Store.questionCache.get(chunk.id);

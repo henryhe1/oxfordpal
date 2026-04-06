@@ -18,7 +18,12 @@ export default {
     // Handle CORS preflight
     if (request.method === 'OPTIONS') {
       return new Response(null, {
-        headers: corsHeaders(request),
+        headers: {
+          'Access-Control-Allow-Origin': request.headers.get('Origin') || '*',
+          'Access-Control-Allow-Methods': 'POST, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Max-Age': '86400',
+        },
       });
     }
 
@@ -75,10 +80,11 @@ export default {
 
 function isAllowedOrigin(origin) {
   return (
-    origin === ALLOWED_ORIGIN ||
-    origin === 'https://www.henryhe.me' ||
+    origin === 'http://localhost:8000' ||   // 👈 add exact match
     origin.startsWith('http://localhost') ||
-    origin.startsWith('http://127.0.0.1')
+    origin.startsWith('http://127.0.0.1') ||
+    origin === ALLOWED_ORIGIN ||
+    origin === 'https://www.henryhe.me'
   );
 }
 
