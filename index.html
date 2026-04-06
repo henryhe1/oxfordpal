@@ -19,15 +19,19 @@
     </div>
   </div>
   <div class="header-right">
-    <div class="api-badge" id="api-badge" title="Estimated API calls remaining this reset window">
-      <span class="api-icon">⚡</span>
-      <span id="api-count">–</span>
-      <span class="api-label">calls left</span>
-      <span class="api-reset" id="api-reset"></span>
-    </div>
+    <!-- Streak Badge -->
     <div class="streak-badge" id="streak-badge" style="display:none">
       🔥 <span id="streak-num">0</span>
     </div>
+    
+    <!-- Import/Export Buttons -->
+    <div class="backup-buttons">
+      <button class="icon-btn" id="export-btn" title="Export all data to JSON">📤</button>
+      <button class="icon-btn" id="import-btn" title="Import data from JSON">📂</button>
+      <input type="file" id="import-file" accept=".json" style="display:none">
+    </div>
+
+    <!-- Navigation -->
     <nav class="nav">
       <button class="nav-btn active" data-view="home">Topics</button>
       <button class="nav-btn" data-view="due">Study Due <span class="due-badge" id="due-count"></span></button>
@@ -169,11 +173,6 @@
     <div id="tab-saved" class="tab-content">
       <div class="saved-toolbar">
         <input class="search-input" id="saved-search" type="text" placeholder="Search saved cards…" style="max-width:320px" />
-        <!-- Add this near the Export button -->
-        <button id="import-btn" class="secondary-btn">📂 Import from JSON</button>
-        <input type="file" id="import-file" accept=".json" style="display:none">
-        <button class="btn-sec" id="export-btn">⬇ Export JSON</button>
-        <button class="btn-sec danger" id="clear-saved-btn">Clear All</button>
       </div>
       <div id="saved-list"></div>
     </div>

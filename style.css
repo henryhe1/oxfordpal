@@ -91,31 +91,100 @@ body {
 
 .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
-/* API Badge */
-.api-badge {
-  display: flex; align-items: center; gap: 4px;
-  background: var(--green-bg);
-  border: 1px solid var(--green);
-  color: var(--green-text);
-  padding: 3px 9px;
-  border-radius: 20px;
-  font-size: 11px;
-  font-family: var(--font-ui);
-  white-space: nowrap;
+/* Backup buttons in header */
+.backup-buttons {
+  display: flex;
+  gap: 6px;
+  margin-right: 12px;
 }
-.api-badge.api-med { background: var(--orange-bg); border-color: var(--orange); color: var(--orange); }
-.api-badge.api-low { background: var(--red-bg); border-color: var(--red); color: var(--red-text); }
-.api-icon { font-size: 10px; }
-.api-label { opacity: 0.8; }
-.api-reset { opacity: 0.6; font-size: 10px; margin-left: 2px; }
 
+.icon-btn {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 1.1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn:hover {
+  background: var(--bg-hover);
+  transform: translateY(-1px);
+  border-color: var(--primary);
+}
+
+.icon-btn:active {
+  transform: translateY(0);
+}
+
+/* Header layout adjustment */
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.header-left h1 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+/* Streak badge styling */
 .streak-badge {
-  display: flex; align-items: center; gap: 4px;
-  background: var(--orange-bg);
-  border: 1px solid var(--orange);
-  color: var(--orange);
-  padding: 3px 9px; border-radius: 20px; font-size: 12px;
-  font-family: var(--font-ui);
+  background: linear-gradient(135deg, #ff6b35, #f7931e);
+  color: white;
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 2px 8px rgba(255, 107, 53, 0.3);
+}
+
+/* Responsive: stack on mobile */
+@media (max-width: 768px) {
+  .header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  
+  .header-right {
+    justify-content: space-between;
+    flex-wrap: wrap;
+  }
+  
+  .backup-buttons {
+    order: 1;
+  }
+  
+  .nav {
+    order: 2;
+    width: 100%;
+    justify-content: space-around;
+  }
+  
+  .theme-toggle {
+    order: 3;
+  }
 }
 
 /* Nav */
