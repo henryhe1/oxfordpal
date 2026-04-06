@@ -169,6 +169,9 @@
     <div id="tab-saved" class="tab-content">
       <div class="saved-toolbar">
         <input class="search-input" id="saved-search" type="text" placeholder="Search saved cards…" style="max-width:320px" />
+        <!-- Add this near the Export button -->
+        <button id="import-btn" class="secondary-btn">📂 Import from JSON</button>
+        <input type="file" id="import-file" accept=".json" style="display:none">
         <button class="btn-sec" id="export-btn">⬇ Export JSON</button>
         <button class="btn-sec danger" id="clear-saved-btn">Clear All</button>
       </div>

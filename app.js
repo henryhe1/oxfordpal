@@ -1,7 +1,7 @@
-// Oxford Palliative Medicine — Main App (Optimized for API Credits)
+// Oxford Palliative Medicine — Main App (with Import/Export, Fixed Due Study, Clickable Tags)
 // Set this to your Cloudflare Worker URL after deploying worker/worker.js
 const API_PROXY_URL = 'https://oxfordpal-api.hello-henryhe.workers.dev';
-console.log("AUTO DEPLOY TEST — OPTIMIZED VERSION WITH DEBUGGING");
+console.log("AUTO DEPLOY TEST — IMPORT/EXPORT VERSION");
 
 // Constants
 const FREE_WINDOW_ESTIMATE = 25;
@@ -10,9 +10,6 @@ const SIMILARITY_THRESHOLD = 0.55;
 const MAX_CARDS_PER_CHUNK = 15;
 const CACHE_TTL_DAYS = 7;
 const API_MIN_INTERVAL_MS = 2000;
-
-// Enable debug mode to see API responses
-const DEBUG_MODE = true;
 
 // API Throttling
 const APIThrottle = {
@@ -51,7 +48,7 @@ const APIThrottle = {
     }
 };
 
-// Enhanced Cache with TTL
+// Cache with TTL
 const QuestionCache = {
     getKey(chunkId) { return `oxpal_qcache_${chunkId}`; },
     
@@ -216,170 +213,75 @@ const App = (() => {
     return false;
   }
 
-  // ENHANCED: Multiple parsing strategies
   function parseResponse(text) {
     if (!text || typeof text !== 'string') {
       console.error('Invalid response text:', text);
       return [];
     }
     
-    console.log('Raw API response length:', text.length);
-    if (DEBUG_MODE) {
-      console.log('First 500 chars of response:', text.substring(0, 500));
-    }
-    
     const questions = [];
+    const blocks = text.split(/(?=Q\d+:|QUESTION\s*\d+:)/i);
     
-    // Strategy 1: Look for Q1:, Q2:, etc. pattern
-    try {
-      const blocks = text.split(/(?=Q\d+:|QUESTION\s*\d+:)/i);
+    for (const block of blocks) {
+      if (!block || block.trim().length < 50) continue;
       
-      for (const block of blocks) {
-        if (!block || block.trim().length < 50) continue;
-        
-        try {
-          // Extract question text
-          let questionMatch = block.match(/(?:Q\d+:|QUESTION\s*\d+:)\s*([^\n]+)/i);
-          if (!questionMatch) continue;
-          
-          const questionText = questionMatch[1].trim();
-          
-          // Extract options (A., B., C., D., E.)
-          const optionsMatch = block.match(/OPTIONS:\s*([\s\S]*?)(?=ANSWER:|EXPLANATION:|TAGS:|SOURCE:|PAGE:|$)/i);
-          let options = [];
-          if (optionsMatch) {
-            const optionsText = optionsMatch[1];
-            const optionLines = optionsText.split('\n');
-            for (const line of optionLines) {
-              const optMatch = line.match(/^([A-E])[.)]\s*(.+)/i);
-              if (optMatch) {
-                options.push(`${optMatch[1]}. ${optMatch[2].trim()}`);
-              }
-            }
-          }
-          
-          if (options.length < 2) continue;
-          
-          // Extract answer
-          const answerMatch = block.match(/ANSWER:\s*([A-E])/i);
-          if (!answerMatch) continue;
-          const answer = answerMatch[1].toUpperCase();
-          
-          // Extract explanation
-          const explanationMatch = block.match(/EXPLANATION:\s*([\s\S]*?)(?=TAGS:|SOURCE:|PAGE:|$)/i);
-          const explanation = explanationMatch ? explanationMatch[1].trim() : 'No explanation provided.';
-          
-          // Extract tags
-          const tagsMatch = block.match(/TAGS:\s*([\s\S]*?)(?=SOURCE:|PAGE:|$)/i);
-          let tags = [];
-          if (tagsMatch) {
-            tags = tagsMatch[1].split(/[,;]/).map(t => t.trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean);
-          }
-          
-          // Extract source
-          const sourceMatch = block.match(/SOURCE:\s*([^\n]+)/i);
-          const source = sourceMatch ? sourceMatch[1].trim() : 'Oxford Textbook of Palliative Medicine, 6th Ed.';
-          
-          // Extract pages
-          const pagesMatch = block.match(/PAGE:\s*([^\n]+)/i);
-          const pages = pagesMatch ? pagesMatch[1].trim() : '';
-          
-          questions.push({
-            question: questionText,
-            options: options,
-            answer: answer,
-            explanation: explanation,
-            tags: tags,
-            source: source,
-            pages: pages
-          });
-          
-        } catch (blockError) {
-          console.warn('Error parsing block:', blockError);
-          continue;
-        }
-      }
-    } catch (e) {
-      console.error('Strategy 1 failed:', e);
-    }
-    
-    // Strategy 2: Look for numbered lists without Q prefix
-    if (questions.length === 0) {
-      console.log('Strategy 1 failed, trying Strategy 2...');
       try {
-        const lines = text.split('\n');
-        let currentQuestion = null;
-        let currentOptions = [];
-        let inOptions = false;
+        let questionMatch = block.match(/(?:Q\d+:|QUESTION\s*\d+:)\s*([^\n]+)/i);
+        if (!questionMatch) continue;
         
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (!line) continue;
-          
-          // Look for numbered question (1., 2., etc.)
-          const numMatch = line.match(/^(\d+)[.)]\s+(.+)/);
-          if (numMatch && !inOptions) {
-            // Save previous question
-            if (currentQuestion && currentOptions.length >= 2) {
-              questions.push({
-                question: currentQuestion,
-                options: [...currentOptions],
-                answer: '',
-                explanation: '',
-                tags: [],
-                source: 'Oxford Textbook of Palliative Medicine, 6th Ed.',
-                pages: ''
-              });
+        const questionText = questionMatch[1].trim();
+        const optionsMatch = block.match(/OPTIONS:\s*([\s\S]*?)(?=ANSWER:|EXPLANATION:|TAGS:|SOURCE:|PAGE:|$)/i);
+        let options = [];
+        if (optionsMatch) {
+          const optionsText = optionsMatch[1];
+          const optionLines = optionsText.split('\n');
+          for (const line of optionLines) {
+            const optMatch = line.match(/^([A-E])[.)]\s*(.+)/i);
+            if (optMatch) {
+              options.push(`${optMatch[1]}. ${optMatch[2].trim()}`);
             }
-            currentQuestion = numMatch[2];
-            currentOptions = [];
-            inOptions = true;
-          }
-          // Look for options (A., B., etc.)
-          else if (inOptions && line.match(/^[A-E][.)]\s+/i)) {
-            currentOptions.push(line);
-          }
-          // Look for answer line
-          else if (line.match(/^answer:/i) && currentQuestion) {
-            const ansMatch = line.match(/answer:\s*([A-E])/i);
-            if (ansMatch && questions.length > 0) {
-              questions[questions.length - 1].answer = ansMatch[1].toUpperCase();
-            }
-            inOptions = false;
-          }
-          // Look for explanation
-          else if (line.match(/^explanation:/i) && questions.length > 0) {
-            const expText = line.replace(/^explanation:/i, '').trim();
-            questions[questions.length - 1].explanation = expText;
           }
         }
         
-        // Save last question
-        if (currentQuestion && currentOptions.length >= 2 && questions.length > 0) {
-          // Already saved above
+        if (options.length < 2) continue;
+        
+        const answerMatch = block.match(/ANSWER:\s*([A-E])/i);
+        if (!answerMatch) continue;
+        const answer = answerMatch[1].toUpperCase();
+        
+        const explanationMatch = block.match(/EXPLANATION:\s*([\s\S]*?)(?=TAGS:|SOURCE:|PAGE:|$)/i);
+        const explanation = explanationMatch ? explanationMatch[1].trim() : 'No explanation provided.';
+        
+        const tagsMatch = block.match(/TAGS:\s*([\s\S]*?)(?=SOURCE:|PAGE:|$)/i);
+        let tags = [];
+        if (tagsMatch) {
+          tags = tagsMatch[1].split(/[,;]/).map(t => t.trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean);
         }
-      } catch (e) {
-        console.error('Strategy 2 failed:', e);
+        
+        const sourceMatch = block.match(/SOURCE:\s*([^\n]+)/i);
+        const source = sourceMatch ? sourceMatch[1].trim() : 'Oxford Textbook of Palliative Medicine, 6th Ed.';
+        
+        const pagesMatch = block.match(/PAGE:\s*([^\n]+)/i);
+        const pages = pagesMatch ? pagesMatch[1].trim() : '';
+        
+        questions.push({
+          question: questionText,
+          options: options,
+          answer: answer,
+          explanation: explanation,
+          tags: tags,
+          source: source,
+          pages: pages
+        });
+        
+      } catch (blockError) {
+        console.warn('Error parsing block:', blockError);
+        continue;
       }
     }
     
-    console.log(`Parsed ${questions.length} questions`);
-    
-    // Filter out incomplete questions
-    const validQuestions = questions.filter(q => 
-      q.question && 
-      q.options && q.options.length >= 2 && 
-      q.answer && /[A-E]/.test(q.answer)
-    );
-    
-    if (validQuestions.length === 0 && DEBUG_MODE) {
-      console.error('No valid questions parsed. Full response:', text);
-    }
-    
-    return validQuestions;
+    return questions.filter(q => q.question && q.options.length >= 2 && q.answer);
   }
-
-  console.log("CALLING API", API_PROXY_URL);
 
   async function callAPI(chunk) {
     if (!chunk || !chunk.id) {
@@ -416,33 +318,21 @@ Passage (Ch. ${chunk.chapter}: ${chunk.title}, pp.${chunk.start}\u2013${chunk.en
 ${chunk.text}
 
 ${avoidNote}
-IMPORTANT FORMATTING RULES:
-- Each question MUST start with "Q1:", "Q2:", etc. on its own line
-- Each question MUST be followed by "OPTIONS:" on the next line
-- Options MUST be labeled A., B., C., D., E. (one per line)
-- Then "ANSWER:" with a single letter (A, B, C, D, or E)
-- Then "EXPLANATION:" with 1-2 sentences
-- Then "TAGS:" with 3-6 comma-separated keywords
-- Then "PAGE:" with the page range
+Format each question EXACTLY like this:
 
-Example format:
-Q1: What is the first-line treatment for neuropathic pain in palliative care?
+Q1: [clinical scenario or knowledge question]
 OPTIONS:
-A. Paracetamol
-B. Gabapentin
-C. Morphine
-D. Ibuprofen
-E. Dexamethasone
-ANSWER: B
-EXPLANATION: Gabapentin is first-line for neuropathic pain based on RCT evidence.
-TAGS: neuropathic-pain, gabapentin, first-line-treatment
+A. [option]
+B. [option]
+C. [option]
+D. [option]
+E. [option]
+ANSWER: [single letter]
+EXPLANATION: [1-2 sentences]
+TAGS: [3-6 comma-separated keywords]
 PAGE: ${chunk.start}-${chunk.end}
 
 Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
-
-    if (DEBUG_MODE) {
-      console.log('Sending prompt (first 500 chars):', prompt.substring(0, 500));
-    }
 
     const result = await APIThrottle.call(async () => {
       const res = await fetch(API_PROXY_URL, {
@@ -456,24 +346,11 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
         }),
       });
       
-      Store.api.recordCall();
-      ApiBadge.update();
-      
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
-      
-      if (DEBUG_MODE) {
-        console.log('API Response structure:', Object.keys(data));
-        console.log('Content type:', typeof data.content);
-        if (data.content) {
-          console.log('Content length:', data.content.length);
-        }
-      }
-      
       return data;
     });
     
-    // Extract text from various possible response formats
     let text = '';
     if (result.content) {
       if (Array.isArray(result.content)) {
@@ -490,32 +367,15 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
     }
     
     if (!text || text.trim().length === 0) {
-      console.error('Empty response from API. Full result:', result);
       throw new Error('Empty response from API');
     }
-    
-    console.log(`Received response with ${text.length} characters`);
     
     const questions = parseResponse(text);
     
     if (!questions || questions.length === 0) {
-      // Save the failed response for debugging
-      if (DEBUG_MODE) {
-        const debugInfo = {
-          timestamp: new Date().toISOString(),
-          chunkId: chunk.id,
-          promptLength: prompt.length,
-          responseLength: text.length,
-          responsePreview: text.substring(0, 1000),
-          fullResponse: text.length < 5000 ? text : text.substring(0, 5000)
-        };
-        localStorage.setItem('oxpal_last_api_error', JSON.stringify(debugInfo));
-        console.error('API Error saved to localStorage. Check "oxpal_last_api_error"');
-      }
-      throw new Error(`Failed to parse any valid questions from API response. Received ${text.length} chars. Check console for details.`);
+      throw new Error(`Failed to parse any valid questions from API response.`);
     }
     
-    // Filter out duplicates
     const uniqueQuestions = [];
     for (const q of questions) {
       if (q && q.question && !isDuplicate(q, existingCards) && 
@@ -525,10 +385,8 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
     }
     
     if (uniqueQuestions.length === 0) {
-      throw new Error(`All ${questions.length} generated questions were duplicates. Try a different topic.`);
+      throw new Error(`All generated questions were duplicates. Try a different topic.`);
     }
-    
-    console.log(`Generated ${uniqueQuestions.length} unique questions out of ${questions.length} total`);
     
     const chunkTags = CHUNK_TAGS[chunk.id] || [];
     uniqueQuestions.forEach(q => { 
@@ -544,7 +402,7 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
     return { questions: uniqueQuestions, fromCache: false };
   }
 
-  // Theme (simplified with defensive checks)
+  // Theme
   const Theme = {
     apply(pref) {
       const root = document.documentElement;
@@ -594,24 +452,9 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
     },
   };
 
-  // API Badge
-  const ApiBadge = {
-    update() {
-      const rem = Store.api.remaining();
-      const el = document.getElementById('api-count');
-      const badge = document.getElementById('api-badge');
-      if (el) el.textContent = rem;
-      if (badge) badge.className = 'api-badge'+(rem<=5?' api-low':rem<=12?' api-med':'');
-      const reset = Store.api.nextReset();
-      const resetEl = document.getElementById('api-reset');
-      if (resetEl && reset) {
-        const diff = reset - Date.now();
-        resetEl.textContent = `resets ${Math.floor(diff/3600000)}h${Math.floor((diff%3600000)/60000)}m`;
-      } else if (resetEl) resetEl.textContent = '';
-    },
-  };
+  // REMOVED: ApiBadge - No longer tracking API credits
 
-  // Topic Grid (simplified)
+  // Topic Grid
   const TopicGrid = {
     activeFilter: 'all',
     init() {
@@ -680,7 +523,7 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
     },
   };
 
-  // Quiz (simplified - keeping existing implementation but using updated callAPI)
+  // Quiz
   const Quiz = {
     currentChunk: null,
     pendingQueue: [],
@@ -854,246 +697,479 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
     },
   };
 
-  // Due Study Mode (keep existing implementation)
+  // FIXED: Due Study Mode
   const DueStudy = {
-    queue:[], index:0,
+    queue: [], 
+    index: 0,
+    
     start() {
-      this.queue = Store.srs.dueCards(); this.index=0;
-      const hasCards = this.queue.length>0;
-      const empty = document.getElementById('due-empty');
-      const content = document.getElementById('due-content');
-      if (empty) empty.style.display = hasCards?'none':'block';
-      if (content) content.style.display = hasCards?'block':'none';
-      if (hasCards) this._show();
+      this.queue = Store.srs.dueCards();
+      this.index = 0;
+      const hasCards = this.queue && this.queue.length > 0;
+      
+      const emptyDiv = document.getElementById('due-empty');
+      const contentDiv = document.getElementById('due-content');
+      
+      if (emptyDiv) emptyDiv.style.display = hasCards ? 'none' : 'block';
+      if (contentDiv) contentDiv.style.display = hasCards ? 'block' : 'none';
+      
+      if (hasCards) {
+        this._show();
+      }
     },
+    
     _show() {
+      if (!this.queue || this.index >= this.queue.length) {
+        this.start();
+        return;
+      }
+      
       const card = this.queue[this.index];
-      if (!card) { this.start(); return; }
-      const pct = Math.round(this.index/this.queue.length*100);
+      if (!card) {
+        this.start();
+        return;
+      }
+      
+      // Update progress
+      const pct = this.queue.length > 0 ? Math.round((this.index + 1) / this.queue.length * 100) : 0;
       const progressFill = document.getElementById('due-progress-fill');
       const progressTxt = document.getElementById('due-progress-txt');
-      if (progressFill) progressFill.style.width = pct+'%';
-      if (progressTxt) progressTxt.textContent = `${this.index} / ${this.queue.length}`;
+      
+      if (progressFill) progressFill.style.width = pct + '%';
+      if (progressTxt) progressTxt.textContent = `${this.index + 1} / ${this.queue.length}`;
+      
+      // Hide answer card, show question
       const ansCard = document.getElementById('due-ans-card');
-      if (ansCard) ansCard.style.display='none';
       const hint = document.getElementById('due-hint');
-      if (hint) hint.style.display='block';
-      const tag = document.getElementById('due-tag');
-      if (tag) tag.textContent = `📖 Ch. ${card.chapter} · ${card.chapterTitle} · pp.${card.pages}`;
-      const qText = document.getElementById('due-q-text');
-      if (qText) qText.textContent = card.question;
+      if (ansCard) ansCard.style.display = 'none';
+      if (hint) hint.style.display = 'block';
+      
+      // Display question
+      const tagEl = document.getElementById('due-tag');
+      if (tagEl) tagEl.textContent = `📖 Ch. ${card.chapter} · ${card.chapterTitle} · pp.${card.pages}`;
+      
+      const qTextEl = document.getElementById('due-q-text');
+      if (qTextEl) qTextEl.textContent = card.question;
+      
+      // Display options
       const optsDiv = document.getElementById('due-options');
       if (optsDiv) {
-        optsDiv.innerHTML='';
-        (card.options||[]).forEach(opt=>{
-          const letter=opt[0];
-          const btn=document.createElement('button');
-          btn.className='opt-btn'; btn.dataset.letter=letter;
-          btn.innerHTML=`<span class="opt-ltr">${letter}.</span><span>${opt.slice(2).trim()}</span><span class="opt-mark"></span>`;
-          btn.addEventListener('click',()=>this._answer(letter,card));
-          optsDiv.appendChild(btn);
-        });
+        optsDiv.innerHTML = '';
+        if (card.options && card.options.length > 0) {
+          card.options.forEach(opt => {
+            if (!opt) return;
+            const letter = opt[0];
+            const btn = document.createElement('button');
+            btn.className = 'opt-btn';
+            btn.dataset.letter = letter;
+            btn.innerHTML = `<span class="opt-ltr">${letter}.</span><span>${opt.slice(2).trim()}</span><span class="opt-mark"></span>`;
+            btn.addEventListener('click', () => this._answer(letter, card));
+            optsDiv.appendChild(btn);
+          });
+        }
       }
     },
+    
     _answer(letter, card) {
-      const isCorrect=letter===card.answer;
-      document.querySelectorAll('#due-options .opt-btn').forEach(btn=>{
-        btn.disabled=true; const l=btn.dataset.letter;
-        if (l===card.answer){btn.classList.add('correct');const mark=btn.querySelector('.opt-mark');if(mark)mark.textContent=' ✓';}
-        else if (l===letter){btn.classList.add('wrong');const mark=btn.querySelector('.opt-mark');if(mark)mark.textContent=' ✗';}
+      const isCorrect = (letter === card.answer);
+      
+      // Mark answers
+      document.querySelectorAll('#due-options .opt-btn').forEach(btn => {
+        btn.disabled = true;
+        const l = btn.dataset.letter;
+        if (l === card.answer) {
+          btn.classList.add('correct');
+          const mark = btn.querySelector('.opt-mark');
+          if (mark) mark.textContent = ' ✓';
+        } else if (l === letter) {
+          btn.classList.add('wrong');
+          const mark = btn.querySelector('.opt-mark');
+          if (mark) mark.textContent = ' ✗';
+        }
       });
+      
+      // Show answer card
       const hint = document.getElementById('due-hint');
-      if (hint) hint.style.display='none';
       const ansCard = document.getElementById('due-ans-card');
-      if (ansCard) ansCard.style.display='block';
+      if (hint) hint.style.display = 'none';
+      if (ansCard) ansCard.style.display = 'block';
+      
+      // Set answer title
       const title = document.getElementById('due-ans-title');
       if (title) {
-        title.textContent=isCorrect?'✓ Correct!':`✗ Incorrect — Correct: ${card.answer}`;
-        title.className='ans-title '+(isCorrect?'ok':'bad');
+        title.textContent = isCorrect ? '✓ Correct!' : `✗ Incorrect — Correct: ${card.answer}`;
+        title.className = 'ans-title ' + (isCorrect ? 'ok' : 'bad');
       }
+      
+      // Set explanation
       const explanation = document.getElementById('due-explanation');
-      if (explanation) explanation.textContent=card.explanation;
-      let srcHtml=`📚 ${card.source}<br>📄 Pages: ${card.pages}`;
-      if (card.tags?.length) srcHtml+=`<br>🏷 ${card.tags.slice(0,5).join(' · ')}`;
-      const source = document.getElementById('due-source');
-      if (source) source.innerHTML=srcHtml;
-      const intervals=SM2.previewIntervals(Store.srs.get(card.id));
+      if (explanation) explanation.textContent = card.explanation || 'No explanation provided.';
+      
+      // Set source
+      let srcHtml = `📚 ${card.source || 'Oxford Textbook'}<br>📄 Pages: ${card.pages || 'N/A'}`;
+      if (card.tags && card.tags.length) {
+        srcHtml += `<br>🏷 ${card.tags.slice(0, 5).join(' · ')}`;
+      }
+      const sourceEl = document.getElementById('due-source');
+      if (sourceEl) sourceEl.innerHTML = srcHtml;
+      
+      // Show interval buttons
+      const intervals = SM2.previewIntervals(Store.srs.get(card.id));
       const hardDays = document.getElementById('due-hard-days');
       const goodDays = document.getElementById('due-good-days');
       const easyDays = document.getElementById('due-easy-days');
-      if (hardDays) hardDays.textContent=SM2.intervalLabel(intervals[2]);
-      if (goodDays) goodDays.textContent=SM2.intervalLabel(intervals[3]);
-      if (easyDays) easyDays.textContent=SM2.intervalLabel(intervals[4]);
-      Store.sessionStats.record(isCorrect,{chunkId:card.chunkId,chapterTitle:card.chapterTitle,question:card.question,correct:isCorrect,answer:card.answer,selected:letter});
-      Store.stats.record(card.chunkId,isCorrect);
-      const advance=(rating)=>{
-        Store.srs.review(card.id,rating);
+      if (hardDays) hardDays.textContent = SM2.intervalLabel(intervals[2]);
+      if (goodDays) goodDays.textContent = SM2.intervalLabel(intervals[3]);
+      if (easyDays) easyDays.textContent = SM2.intervalLabel(intervals[4]);
+      
+      // Record stats
+      Store.sessionStats.record(isCorrect, {
+        chunkId: card.chunkId,
+        chapterTitle: card.chapterTitle,
+        question: card.question,
+        correct: isCorrect,
+        answer: card.answer,
+        selected: letter
+      });
+      Store.stats.record(card.chunkId, isCorrect);
+      
+      // Setup rating buttons
+      const advance = (rating) => {
+        Store.srs.review(card.id, rating);
         this.index++;
-        if (this.index>=this.queue.length) this.start(); else this._show();
+        if (this.index >= this.queue.length) {
+          this.start();
+        } else {
+          this._show();
+        }
         TopicGrid.updateDueBadge();
       };
+      
       const sr1 = document.getElementById('due-sr-1');
       const sr2 = document.getElementById('due-sr-2');
       const sr3 = document.getElementById('due-sr-3');
       const sr4 = document.getElementById('due-sr-4');
-      if (sr1) sr1.onclick=()=>advance(1);
-      if (sr2) sr2.onclick=()=>advance(2);
-      if (sr3) sr3.onclick=()=>advance(3);
-      if (sr4) sr4.onclick=()=>advance(4);
-    },
+      
+      if (sr1) sr1.onclick = () => advance(1);
+      if (sr2) sr2.onclick = () => advance(2);
+      if (sr3) sr3.onclick = () => advance(3);
+      if (sr4) sr4.onclick = () => advance(4);
+    }
   };
 
-  // History (simplified)
+  // History with Import/Export and Clickable Tags
   const History = {
-    activeTab:'session',
+    activeTab: 'session',
+    
     init() {
-      document.querySelectorAll('.tab-btn').forEach(btn=>{
-        btn.addEventListener('click',()=>{
-          document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
-          document.querySelectorAll('.tab-content').forEach(t=>t.classList.remove('active'));
+      // Tab switching
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+          document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
           btn.classList.add('active');
-          const tabContent = document.getElementById('tab-'+btn.dataset.tab);
+          const tabContent = document.getElementById('tab-' + btn.dataset.tab);
           if (tabContent) tabContent.classList.add('active');
-          this.activeTab=btn.dataset.tab; this.render();
+          this.activeTab = btn.dataset.tab;
+          this.render();
         });
       });
+      
+      // Export button
       const exportBtn = document.getElementById('export-btn');
-      if (exportBtn) exportBtn.addEventListener('click',this._export);
+      if (exportBtn) exportBtn.addEventListener('click', () => this._export());
+      
+      // Import button
+      const importBtn = document.getElementById('import-btn');
+      const importFile = document.getElementById('import-file');
+      if (importBtn && importFile) {
+        importBtn.addEventListener('click', () => importFile.click());
+        importFile.addEventListener('change', (e) => this._import(e));
+      }
+      
+      // Clear saved button
       const clearBtn = document.getElementById('clear-saved-btn');
-      if (clearBtn) clearBtn.addEventListener('click',()=>{
-        if (confirm('Delete all saved cards?')){ Store.cards.clear(); this.render(); TopicGrid.render(); }
-      });
+      if (clearBtn) {
+        clearBtn.addEventListener('click', () => {
+          if (confirm('Delete all saved cards?')) {
+            Store.cards.clear();
+            this.render();
+            TopicGrid.render();
+          }
+        });
+      }
+      
+      // Search input
       const savedSearch = document.getElementById('saved-search');
-      if (savedSearch) savedSearch.addEventListener('input',()=>this._renderSaved());
+      if (savedSearch) savedSearch.addEventListener('input', () => this._renderSaved());
     },
+    
     render() {
       const savedCount = document.getElementById('saved-count');
-      if (savedCount) savedCount.textContent=Store.cards.list().length;
-      if (this.activeTab==='session') this._renderSession();
-      if (this.activeTab==='saved') this._renderSaved();
-      if (this.activeTab==='stats') this._renderStats();
+      if (savedCount) savedCount.textContent = Store.cards.list().length;
+      if (this.activeTab === 'session') this._renderSession();
+      if (this.activeTab === 'saved') this._renderSaved();
+      if (this.activeTab === 'stats') this._renderStats();
     },
+    
+    _export() {
+      const data = {
+        version: 2,
+        exportDate: new Date().toISOString(),
+        cards: Store.cards.list(),
+        srsStates: Store.srs.all(),
+        questionCache: QuestionCache.all(),
+        stats: Store.stats.get()
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `oxford-pallcare-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+    
+    _import(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          const data = JSON.parse(e.target.result);
+          let importCount = 0;
+          
+          if (data.cards && Array.isArray(data.cards)) {
+            data.cards.forEach(card => {
+              // Check if card already exists
+              const existing = Store.cards.list().find(c => c.question === card.question);
+              if (!existing) {
+                Store.cards.save(card);
+                importCount++;
+              }
+            });
+          }
+          
+          if (data.srsStates) {
+            Object.entries(data.srsStates).forEach(([id, state]) => {
+              Store.srs.save(id, state);
+            });
+          }
+          
+          alert(`Imported ${importCount} new cards!`);
+          this.render();
+          TopicGrid.render();
+          TopicGrid.updateDueBadge();
+        } catch (err) {
+          alert('Error importing file: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+      event.target.value = ''; // Reset file input
+    },
+    
     _renderSession() {
-      const h=Store.sessionStats;
-      const bar=document.getElementById('score-bar');
-      const list=document.getElementById('session-list');
-      if (!h.history.length){ if(bar) bar.style.display='none'; if(list) list.innerHTML='<div class="empty-hint">No questions answered yet this session.</div>'; return; }
-      if(bar) bar.style.display='flex';
+      const h = Store.sessionStats;
+      const bar = document.getElementById('score-bar');
+      const list = document.getElementById('session-list');
+      
+      if (!h.history || !h.history.length) {
+        if (bar) bar.style.display = 'none';
+        if (list) list.innerHTML = '<div class="empty-hint">No questions answered yet this session.</div>';
+        return;
+      }
+      
+      if (bar) bar.style.display = 'flex';
       const pctEl = document.getElementById('score-pct');
       const fillEl = document.getElementById('score-fill');
       const tallyEl = document.getElementById('score-tally');
-      if(pctEl) pctEl.textContent=h.pct()+'%';
-      if(fillEl) fillEl.style.width=h.pct()+'%';
-      if(tallyEl) tallyEl.textContent=`${h.correct}/${h.answered}`;
-      if(list) list.innerHTML=h.history.map(item=>`<div class="hist-item ${item.correct?'ok':'bad'}">
-        <div class="hist-ch">${item.chapterTitle}</div>
-        <div class="hist-result ${item.correct?'ok':'bad'}">${item.correct?'✓ Correct':`✗ Incorrect — Ans: ${item.answer}${item.selected!==item.answer?` (you: ${item.selected})`:''}`}</div>
-        <div class="hist-q">${item.question.slice(0,90)}…</div></div>`).join('');
-    },
-    _renderSaved() {
-      const q=(document.getElementById('saved-search')?.value||'').toLowerCase();
-      let cards=Store.cards.list();
-      if (q) cards=cards.filter(c=>c.question.toLowerCase().includes(q)||c.chapterTitle?.toLowerCase().includes(q)||(c.tags||[]).some(t=>t.includes(q)));
-      cards.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-      const savedCount = document.getElementById('saved-count');
-      if(savedCount) savedCount.textContent=Store.cards.list().length;
-      const list=document.getElementById('saved-list');
-      if(!list) return;
-      if (!cards.length){ list.innerHTML='<div class="empty-hint">No saved cards yet.</div>'; return; }
-      list.innerHTML=cards.map(card=>{
-        const srs=Store.srs.get(card.id);
-        const due=SM2.isDue(srs);
-        const nxt=srs.dueDate?SM2.intervalLabel(Math.max(0,Math.round((new Date(srs.dueDate)-new Date())/86400000))):'New';
-        return `<div class="saved-card">
-          <div class="saved-card-header">
-            <span class="topic-ch">Ch. ${card.chapter} · ${card.chapterTitle}</span>
-            <span class="srs-chip ${due?'due':''}">${due?'⚡ Due':`Next: ${nxt}`}</span>
-            <button class="delete-card" data-id="${card.id}" title="Delete">✕</button>
+      
+      if (pctEl) pctEl.textContent = h.pct() + '%';
+      if (fillEl) fillEl.style.width = h.pct() + '%';
+      if (tallyEl) tallyEl.textContent = `${h.correct}/${h.answered}`;
+      
+      if (list) {
+        list.innerHTML = h.history.map(item => `
+          <div class="hist-item ${item.correct ? 'ok' : 'bad'}">
+            <div class="hist-ch">${item.chapterTitle}</div>
+            <div class="hist-result ${item.correct ? 'ok' : 'bad'}">
+              ${item.correct ? '✓ Correct' : `✗ Incorrect — Ans: ${item.answer}${item.selected !== item.answer ? ` (you: ${item.selected})` : ''}`}
+            </div>
+            <div class="hist-q">${item.question.slice(0, 90)}…</div>
           </div>
-          ${card.tags?.length?`<div class="tag-row">${card.tags.slice(0,5).map(t=>`<span class="tag-pill">${t}</span>`).join('')}</div>`:''}
-          <div class="saved-q">${card.question}</div>
-          <details class="saved-details">
-            <summary>Answer: ${card.answer}</summary>
-            <div class="saved-opts">${(card.options||[]).join('<br>')}</div>
-            <div class="saved-expl">${card.explanation}</div>
-            <div class="saved-source">📄 ${card.source} · Pages ${card.pages}</div>
-          </details></div>`;
+        `).join('');
+      }
+    },
+    
+    _renderSaved() {
+      const searchTerm = (document.getElementById('saved-search')?.value || '').toLowerCase();
+      let cards = Store.cards.list();
+      
+      if (searchTerm) {
+        cards = cards.filter(c => 
+          c.question.toLowerCase().includes(searchTerm) ||
+          c.chapterTitle?.toLowerCase().includes(searchTerm) ||
+          (c.tags || []).some(tag => tag.toLowerCase().includes(searchTerm))
+        );
+      }
+      
+      cards.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      
+      const savedCount = document.getElementById('saved-count');
+      if (savedCount) savedCount.textContent = Store.cards.list().length;
+      
+      const list = document.getElementById('saved-list');
+      if (!list) return;
+      
+      if (!cards.length) {
+        list.innerHTML = '<div class="empty-hint">No saved cards yet.</div>';
+        return;
+      }
+      
+      list.innerHTML = cards.map(card => {
+        const srs = Store.srs.get(card.id);
+        const due = SM2.isDue(srs);
+        const nxt = srs.dueDate ? SM2.intervalLabel(Math.max(0, Math.round((new Date(srs.dueDate) - new Date()) / 86400000))) : 'New';
+        
+        return `
+          <div class="saved-card" data-card-id="${card.id}">
+            <div class="saved-card-header">
+              <span class="topic-ch">Ch. ${card.chapter} · ${card.chapterTitle}</span>
+              <span class="srs-chip ${due ? 'due' : ''}">${due ? '⚡ Due' : `Next: ${nxt}`}</span>
+              <button class="delete-card" data-id="${card.id}" title="Delete">✕</button>
+            </div>
+            ${card.tags && card.tags.length ? `
+              <div class="tag-row">
+                ${card.tags.slice(0, 8).map(tag => `
+                  <span class="tag-pill clickable-tag" data-tag="${tag}">${tag}</span>
+                `).join('')}
+              </div>
+            ` : ''}
+            <div class="saved-q">${card.question}</div>
+            <details class="saved-details">
+              <summary>Answer: ${card.answer}</summary>
+              <div class="saved-opts">${(card.options || []).join('<br>')}</div>
+              <div class="saved-expl">${card.explanation}</div>
+              <div class="saved-source">📄 ${card.source} · Pages ${card.pages}</div>
+            </details>
+          </div>
+        `;
       }).join('');
-      list.querySelectorAll('.delete-card').forEach(btn=>{
-        btn.addEventListener('click',()=>{ Store.cards.delete(btn.dataset.id); this._renderSaved(); TopicGrid.render(); });
+      
+      // Add click handlers for delete buttons
+      list.querySelectorAll('.delete-card').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          Store.cards.delete(btn.dataset.id);
+          this._renderSaved();
+          TopicGrid.render();
+        });
+      });
+      
+      // Add click handlers for clickable tags
+      list.querySelectorAll('.clickable-tag').forEach(tagEl => {
+        tagEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const tag = tagEl.dataset.tag;
+          const searchInput = document.getElementById('saved-search');
+          if (searchInput) {
+            searchInput.value = tag;
+            this._renderSaved();
+          }
+        });
       });
     },
+    
     _renderStats() {
-      const s=Store.stats.get();
-      const totalCards=Store.cards.list().length;
-      const dueCount=Store.srs.dueCards().length;
-      const cachedChunks=Object.keys(QuestionCache.all()).length;
-      const pct=s.totalAnswered?Math.round(s.totalCorrect/s.totalAnswered*100):0;
-      const by=s.byChapter||{};
-      const weakest=Object.entries(by).filter(([,d])=>d.answered>=3)
-        .sort((a,b)=>(a[1].correct/a[1].answered)-(b[1].correct/b[1].answered)).slice(0,6);
+      const s = Store.stats.get();
+      const totalCards = Store.cards.list().length;
+      const dueCount = Store.srs.dueCards().length;
+      const cachedChunks = Object.keys(QuestionCache.all()).length;
+      const pct = s.totalAnswered ? Math.round(s.totalCorrect / s.totalAnswered * 100) : 0;
+      const by = s.byChapter || {};
+      const weakest = Object.entries(by).filter(([, d]) => d.answered >= 3)
+        .sort((a, b) => (a[1].correct / a[1].answered) - (b[1].correct / b[1].answered)).slice(0, 6);
+      
       const statsGrid = document.getElementById('stats-grid');
-      if(statsGrid) statsGrid.innerHTML=`
-        <div class="stat-card"><div class="stat-num">${s.totalAnswered||0}</div><div class="stat-lbl">Total answered</div></div>
-        <div class="stat-card"><div class="stat-num">${pct}%</div><div class="stat-lbl">Overall accuracy</div></div>
-        <div class="stat-card"><div class="stat-num">${totalCards}</div><div class="stat-lbl">Cards saved</div></div>
-        <div class="stat-card"><div class="stat-num">${dueCount}</div><div class="stat-lbl">Due for review</div></div>
-        <div class="stat-card"><div class="stat-num">${cachedChunks}/120</div><div class="stat-lbl">Chunks cached</div></div>
-        ${weakest.length?`<div class="stat-card wide"><div class="stat-lbl" style="margin-bottom:8px;font-weight:500">Weakest chapters (≥3 attempts)</div>${weakest.map(([id,d])=>{const sec=SECTIONS?.find(s=>s.id===id);return`<div class="weak-row"><span>${sec?.title||id}</span><span class="weak-pct">${Math.round(d.correct/d.answered*100)}% (${d.correct}/${d.answered})</span></div>`;}).join('')}</div>`:''}`;
-    },
-    _export() {
-      const data={version:2,exportDate:new Date().toISOString(),cards:Store.cards.list(),srsStates:Store.srs.all(),questionCache:QuestionCache.all()};
-      const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-      const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-      a.download=`oxford-pallcare-${new Date().toISOString().slice(0,10)}.json`; a.click();
-    },
+      if (statsGrid) {
+        statsGrid.innerHTML = `
+          <div class="stat-card"><div class="stat-num">${s.totalAnswered || 0}</div><div class="stat-lbl">Total answered</div></div>
+          <div class="stat-card"><div class="stat-num">${pct}%</div><div class="stat-lbl">Overall accuracy</div></div>
+          <div class="stat-card"><div class="stat-num">${totalCards}</div><div class="stat-lbl">Cards saved</div></div>
+          <div class="stat-card"><div class="stat-num">${dueCount}</div><div class="stat-lbl">Due for review</div></div>
+          <div class="stat-card"><div class="stat-num">${cachedChunks}/120</div><div class="stat-lbl">Chunks cached</div></div>
+          ${weakest.length ? `<div class="stat-card wide"><div class="stat-lbl" style="margin-bottom:8px;font-weight:500">Weakest chapters (≥3 attempts)</div>
+            ${weakest.map(([id, d]) => {
+              const sec = SECTIONS?.find(s => s.id === id);
+              return `<div class="weak-row"><span>${sec?.title || id}</span><span class="weak-pct">${Math.round(d.correct / d.answered * 100)}% (${d.correct}/${d.answered})</span></div>`;
+            }).join('')}
+          </div>` : ''}
+        `;
+      }
+    }
   };
 
   // Settings
   const Settings = {
     init() {
-      const s=Store.settings.get();
+      const s = Store.settings.get();
       const dailyNewLimit = document.getElementById('daily-new-limit');
       const dailyReviewLimit = document.getElementById('daily-review-limit');
-      if(dailyNewLimit) {
-        dailyNewLimit.value=s.dailyNewLimit;
-        dailyNewLimit.addEventListener('change',e=>Store.settings.set({dailyNewLimit:+e.target.value}));
+      
+      if (dailyNewLimit) {
+        dailyNewLimit.value = s.dailyNewLimit;
+        dailyNewLimit.addEventListener('change', e => Store.settings.set({ dailyNewLimit: +e.target.value }));
       }
-      if(dailyReviewLimit) {
-        dailyReviewLimit.value=s.dailyReviewLimit;
-        dailyReviewLimit.addEventListener('change',e=>Store.settings.set({dailyReviewLimit:+e.target.value}));
+      if (dailyReviewLimit) {
+        dailyReviewLimit.value = s.dailyReviewLimit;
+        dailyReviewLimit.addEventListener('change', e => Store.settings.set({ dailyReviewLimit: +e.target.value }));
       }
-      const resetApiBtn = document.getElementById('reset-api-btn');
-      if(resetApiBtn) resetApiBtn.addEventListener('click',()=>{ Store.api.reset(); ApiBadge.update(); });
+      
       const clearCacheBtn = document.getElementById('clear-cache-btn');
-      if(clearCacheBtn) clearCacheBtn.addEventListener('click',()=>{
-        if (confirm('Clear question cache? This will force fresh API calls for cached topics.')){ QuestionCache.clear(); TopicGrid.render(); }
-      });
+      if (clearCacheBtn) {
+        clearCacheBtn.addEventListener('click', () => {
+          if (confirm('Clear question cache? This will force fresh API calls for cached topics.')) {
+            QuestionCache.clear();
+            TopicGrid.render();
+          }
+        });
+      }
+      
       const nukeBtn = document.getElementById('nuke-btn');
-      if(nukeBtn) nukeBtn.addEventListener('click',()=>{
-        if (confirm('Reset ALL data? Cards, SRS, cache, and stats will be deleted.')){
-          ['cards','srs','api','settings','stats'].forEach(k=>localStorage.removeItem('oxpal_'+k));
-          QuestionCache.clear();
-          location.reload();
-        }
-      });
-    },
+      if (nukeBtn) {
+        nukeBtn.addEventListener('click', () => {
+          if (confirm('Reset ALL data? Cards, SRS, cache, and stats will be deleted.')) {
+            ['cards', 'srs', 'settings', 'stats'].forEach(k => localStorage.removeItem('oxpal_' + k));
+            QuestionCache.clear();
+            location.reload();
+          }
+        });
+      }
+    }
   };
 
   function init() {
     if (typeof SECTIONS === 'undefined') {
-      console.error('SECTIONS data not loaded! Make sure sections.js is loaded before app.js');
+      console.error('SECTIONS data not loaded!');
       const errorDiv = document.createElement('div');
       errorDiv.style.cssText = 'position:fixed;top:0;left:0;right:0;background:red;color:white;padding:10px;text-align:center;z-index:9999';
       errorDiv.textContent = 'Error: sections.js not loaded. Please check your HTML file.';
       document.body.prepend(errorDiv);
       return;
     }
-    Theme.init(); Nav.init(); TopicGrid.init(); Quiz.initActions();
-    History.init(); Settings.init(); ApiBadge.update();
-    setInterval(ApiBadge.update.bind(ApiBadge),60000);
+    
+    Theme.init();
+    Nav.init();
+    TopicGrid.init();
+    Quiz.initActions();
+    History.init();
+    Settings.init();
+    
+    setInterval(() => TopicGrid.updateDueBadge(), 60000);
     TopicGrid.updateDueBadge();
-    console.log('✅ Optimized app loaded with debugging — Check console for API response details');
+    
+    console.log('✅ App loaded with Import/Export, fixed Due Study, and clickable tags');
   }
 
   return { init };
@@ -1104,12 +1180,9 @@ if (typeof SECTIONS !== 'undefined') {
   document.addEventListener('DOMContentLoaded', App.init);
 } else {
   console.error('SECTIONS not defined. Make sure sections.js loads first.');
-  // Try again after a short delay
   window.addEventListener('load', () => {
     if (typeof SECTIONS !== 'undefined') {
       document.addEventListener('DOMContentLoaded', App.init);
-    } else {
-      console.error('SECTIONS still not defined after page load');
     }
   });
 }
