@@ -1,12 +1,102 @@
-// Oxford Palliative Medicine — Main App
+// Oxford Palliative Medicine — Main App (Optimized for API Credits)
 // Set this to your Cloudflare Worker URL after deploying worker/worker.js
 const API_PROXY_URL = 'https://oxfordpal-api.hello-henryhe.workers.dev';
-console.log("AUTO DEPLOY TEST");
+console.log("AUTO DEPLOY TEST — OPTIMIZED VERSION");
 
 // Constants
 const FREE_WINDOW_ESTIMATE = 25;
 const BATCH_SIZE_DEFAULT   = 7;
 const SIMILARITY_THRESHOLD = 0.55;
+const MAX_CARDS_PER_CHUNK = 15; // Credit-saving: don't over-generate for one chunk
+const CACHE_TTL_DAYS = 7; // Refresh cache after 7 days
+const API_MIN_INTERVAL_MS = 2000; // Throttle API calls
+
+// API Throttling
+const APIThrottle = {
+    lastCall: 0,
+    queue: [],
+    
+    async call(fn) {
+        return new Promise((resolve, reject) => {
+            this.queue.push({ fn, resolve, reject });
+            this.process();
+        });
+    },
+    
+    async process() {
+        if (this.processing) return;
+        this.processing = true;
+        
+        while (this.queue.length > 0) {
+            const now = Date.now();
+            const wait = this.lastCall + API_MIN_INTERVAL_MS - now;
+            if (wait > 0) {
+                await new Promise(r => setTimeout(r, wait));
+            }
+            
+            const { fn, resolve, reject } = this.queue.shift();
+            this.lastCall = Date.now();
+            try {
+                const result = await fn();
+                resolve(result);
+            } catch (e) {
+                reject(e);
+            }
+        }
+        
+        this.processing = false;
+    }
+};
+
+// Enhanced Cache with TTL
+const QuestionCache = {
+    getKey(chunkId) { return `oxpal_qcache_${chunkId}`; },
+    
+    set(chunkId, questions) {
+        const cacheEntry = {
+            data: questions,
+            timestamp: Date.now(),
+            ttl: CACHE_TTL_DAYS * 24 * 60 * 60 * 1000,
+            chunkId: chunkId
+        };
+        try {
+            localStorage.setItem(this.getKey(chunkId), JSON.stringify(cacheEntry));
+        } catch(e) { console.warn('Cache save failed', e); }
+    },
+    
+    get(chunkId) {
+        try {
+            const raw = localStorage.getItem(this.getKey(chunkId));
+            if (!raw) return null;
+            
+            const entry = JSON.parse(raw);
+            if (Date.now() - entry.timestamp > entry.ttl) {
+                localStorage.removeItem(this.getKey(chunkId));
+                return null;
+            }
+            return entry.data;
+        } catch(e) { return null; }
+    },
+    
+    clear() {
+        Object.keys(localStorage).forEach(key => {
+            if (key.startsWith('oxpal_qcache_')) localStorage.removeItem(key);
+        });
+    },
+    
+    all() {
+        const cache = {};
+        Object.keys(localStorage).forEach(key => {
+            if (key.startsWith('oxpal_qcache_')) {
+                try {
+                    const entry = JSON.parse(localStorage.getItem(key));
+                    if (entry.data) cache[entry.chunkId || key.replace('oxpal_qcache_', '')] = entry.data;
+                } catch(e) {}
+            }
+        });
+        return cache;
+    }
+};
 
 const App = (() => {
 
@@ -79,30 +169,50 @@ const App = (() => {
     return SECTIONS[Math.floor(Math.random()*SECTIONS.length)];
   }
 
-  // Duplicate detection via tag overlap + substring match
-  function isDuplicate(newQ, existingCards) {
-  if (!existingCards || existingCards.length === 0) return false;  // first run: nothing is a duplicate
-  const newText = newQ.question.toLowerCase();
-  for (const card of existingCards) {
-    if (card.question.toLowerCase() === newText) return true;
-    const newTags = new Set(newQ.tags||[]);
-    const oldTags = new Set(card.tags||[]);
-    if (newTags.size && oldTags.size) {
-      const inter = [...newTags].filter(t=>oldTags.has(t)).length;
-      const union = new Set([...newTags,...oldTags]).size;
-      if (inter/union > SIMILARITY_THRESHOLD) {
-        let max=0, a=newText, b=card.question.toLowerCase();
-        for (let i=0;i<a.length;i++) for (let j=0;j<b.length;j++) {
-          let len=0;
-          while (i+len<a.length&&j+len<b.length&&a[i+len]===b[j+len]) len++;
-          if (len>max) max=len;
-        }
-        if (max > 40) return true;
+  // Optimized duplicate detection with early exit
+  function longestCommonSubstring(str1, str2) {
+    let max = 0;
+    for (let i = 0; i < str1.length; i++) {
+      for (let j = 0; j < str2.length; j++) {
+        let len = 0;
+        while (i + len < str1.length && j + len < str2.length && str1[i+len] === str2[j+len]) len++;
+        if (len > max) max = len;
+        if (max > 40) return max; // Early exit
       }
     }
+    return max;
   }
-  return false;
-}
+
+  function isDuplicate(newQ, existingCards) {
+    if (!existingCards || existingCards.length === 0) return false;
+    
+    const newText = newQ.question.toLowerCase();
+    const newWords = newText.split(/\s+/).filter(w => w.length > 4);
+    const newWordSet = new Set(newWords);
+    
+    for (const card of existingCards) {
+      // Exact match check
+      if (card.question.toLowerCase() === newText) return true;
+      
+      const oldText = card.question.toLowerCase();
+      const oldWords = oldText.split(/\s+/).filter(w => w.length > 4);
+      const oldWordSet = new Set(oldWords);
+      
+      // Word overlap check (cheaper than LCS)
+      let overlap = 0;
+      for (const word of newWordSet) {
+        if (oldWordSet.has(word)) overlap++;
+      }
+      const similarity = overlap / Math.min(newWordSet.size, oldWordSet.size);
+      
+      // Only do expensive LCS if word overlap is high
+      if (similarity > 0.6) {
+        const lcs = longestCommonSubstring(newText, oldText);
+        if (lcs.length > 40) return true;
+      }
+    }
+    return false;
+  }
 
   // Parse batch response with Q1:...Q7: format
   function parseResponse(text) {
@@ -132,130 +242,116 @@ const App = (() => {
 
   console.log("CALLING API", API_PROXY_URL);
 
-  // API call with cache check
+  // OPTIMIZED API call with cache check and duplicate prevention
   async function callAPI(chunk) {
-    const cached = Store.questionCache.get(chunk.id);
-    if (cached && cached.length > 0) return { questions: cached, fromCache: true };
+    // Check cache first (with TTL)
+    const cached = QuestionCache.get(chunk.id);
+    if (cached && cached.length > 0) {
+      console.log(`Using cached questions for chunk ${chunk.id}`);
+      return { questions: cached, fromCache: true };
+    }
 
-    // Check if we already have enough cards for this chunk
+    // Credit-saving: Don't generate more than MAX_CARDS_PER_CHUNK
     const existingCards = Store.cards.forChunk(chunk.id);
-    if (existingCards.length >= 15) { // Configurable threshold
-        throw new Error(`Chunk ${chunk.id} already has ${existingCards.length} cards. Use due study instead.`);
+    if (existingCards.length >= MAX_CARDS_PER_CHUNK) {
+      throw new Error(`This topic already has ${existingCards.length} cards. Practice due cards instead.`);
     }
 
     if (!API_PROXY_URL || API_PROXY_URL.includes('YOUR-SUBDOMAIN'))
       throw new Error('Proxy not configured. Set API_PROXY_URL in app.js');
 
-    // const existingQs = Store.cards.forChunk(chunk.id).map(c=>c.question);
-    // const avoidNote = existingQs.length
-    //   ? '\nAVOID duplicating these existing questions:\n'+existingQs.slice(0,5).map((q,i)=>`${i+1}. ${q.slice(0,80)}`).join('\n')+'\n'
-    //   : '';
-
-    // IMPROVED: Send more specific avoid list with semantic context
+    // Smart avoid list with semantic context
     const existingQuestions = existingCards.map(c => c.question);
     const avoidNote = existingQuestions.length
-        ? `\nIMPORTANT: The following ${existingQuestions.length} questions already exist for this section. DO NOT generate duplicates or similar questions:\n` + 
-          existingQuestions.slice(0, 8).map((q, i) => `${i+1}. ${q.slice(0, 100)}`).join('\n') +
-          `\nGenerate COMPLETELY NEW questions on different subtopics.\n`
-        : '';  
-
-//     const prompt = `Use ONLY the information in the passage below. Focus on key testable concepts, not trivial details.${avoidNote}
-// Generate ${BATCH_SIZE_DEFAULT} high-quality single-best-answer exam questions from this Oxford Textbook of Palliative Medicine excerpt (Ch. ${chunk.chapter}: ${chunk.title}, pp.${chunk.start}\u2013${chunk.end}):
-
-// ${chunk.text}
-
-// Format each question EXACTLY like this (repeat ${BATCH_SIZE_DEFAULT} times):
-
-// Q1: [clinical scenario or knowledge question]
-// OPTIONS:
-// A. [option]
-// B. [option]
-// C. [option]
-// D. [option]
-// E. [option]
-// ANSWER: [single letter]
-// EXPLANATION: [1-2 sentences: why correct, why key distractors wrong]
-// TAGS: [3-6 comma-separated clinical keywords]
-// PAGE: ${chunk.start}-${chunk.end}
-
-// Q2: ...
-
-// Rules: all answerable from passage; vary question types; plausible but clearly wrong distractors.`;
-
+      ? `\n⚠️ CRITICAL: The following ${existingQuestions.length} question(s) already exist for this section. DO NOT generate duplicates or similar questions:\n` + 
+        existingQuestions.slice(0, 8).map((q, i) => `${i+1}. ${q.slice(0, 100)}`).join('\n') +
+        `\nGenerate COMPLETELY NEW questions on different subtopics or aspects not covered above.\n`
+      : '';
 
     const prompt = `Use ONLY the information in the passage below. Focus on key testable concepts not yet covered.
-    ${avoidNote}
-    Generate ${BATCH_SIZE_DEFAULT} high-quality single-best-answer exam questions from this Oxford Textbook of Palliative Medicine excerpt (Ch. ${chunk.chapter}: ${chunk.title}, pp.${chunk.start}\u2013${chunk.end}):
+${avoidNote}
+Generate ${BATCH_SIZE_DEFAULT} high-quality single-best-answer exam questions from this Oxford Textbook of Palliative Medicine excerpt (Ch. ${chunk.chapter}: ${chunk.title}, pp.${chunk.start}\u2013${chunk.end}):
 
-    ${chunk.text}
+${chunk.text}
 
-    Format each question EXACTLY like this (repeat ${BATCH_SIZE_DEFAULT} times):
+Format each question EXACTLY like this (repeat ${BATCH_SIZE_DEFAULT} times):
 
-    Q1: [clinical scenario or knowledge question]
-    OPTIONS:
-    A. [option]
-    B. [option]
-    C. [option]
-    D. [option]
-    E. [option]
-    ANSWER: [single letter]
-    EXPLANATION: [1-2 sentences: why correct, why key distractors wrong]
-    TAGS: [3-6 comma-separated clinical keywords]
-    PAGE: ${chunk.start}-${chunk.end}
+Q1: [clinical scenario or knowledge question]
+OPTIONS:
+A. [option]
+B. [option]
+C. [option]
+D. [option]
+E. [option]
+ANSWER: [single letter]
+EXPLANATION: [1-2 sentences: why correct, why key distractors wrong]
+TAGS: [3-6 comma-separated clinical keywords]
+PAGE: ${chunk.start}-${chunk.end}
 
-    Q2: ...
+Q2: ...
 
-    Rules: 
-    - ALL questions must be answerable from passage
-    - Vary question types (diagnosis, management, mechanism, ethics)
-    - Create plausible but clearly wrong distractors
-    - AVOID topics already covered in existing questions above`;
+CRITICAL RULES:
+1. ALL questions must be answerable from passage
+2. Vary question types (diagnosis, management, mechanism, ethics, risk factors)
+3. Create plausible but clearly wrong distractors
+4. AVOID topics already covered in existing questions above
+5. Focus on different subtopics than previously asked`;
 
-
-    const res = await fetch(API_PROXY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2800,
-        temperature: 0.7,
-        messages: [{ role: 'user', content: prompt }],
-      }),
+    // Use throttled API call
+    const result = await APIThrottle.call(async () => {
+      const res = await fetch(API_PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 2800,
+          temperature: 0.7,
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      });
+      
+      Store.api.recordCall();
+      ApiBadge.update();
+      
+      const data = await res.json();
+      if (data.error) throw new Error(data.error.message);
+      return data;
     });
-    Store.api.recordCall();
-    ApiBadge.update();
-
-    const data = await res.json();
-    if (data.error) throw new Error(data.error.message);
-    const text = data.content.map(b=>b.text||'').join('');
+    
+    const text = result.content.map(b=>b.text||'').join('');
     const questions = parseResponse(text);
-
-    // IMPROVED: More aggressive duplicate filtering
+    
+    // Aggressive duplicate filtering
     const uniqueQuestions = [];
     for (const q of questions) {
-        if (!isDuplicate(q, existingCards) && 
-            !uniqueQuestions.some(uq => uq.question === q.question)) {
-            uniqueQuestions.push(q);
-        }
+      if (!isDuplicate(q, existingCards) && 
+          !uniqueQuestions.some(uq => uq.question === q.question)) {
+        uniqueQuestions.push(q);
+      }
     }
     
+    // Partial success handling - don't waste API call if we got some good questions
     if (uniqueQuestions.length === 0) {
-        throw new Error(`All ${BATCH_SIZE_DEFAULT} generated questions were duplicates. Try a different topic.`);
+      throw new Error(`All ${BATCH_SIZE_DEFAULT} generated questions were duplicates. Try a different topic.`);
     }
     
     if (uniqueQuestions.length < BATCH_SIZE_DEFAULT * 0.5) {
-        console.warn(`Only generated ${uniqueQuestions.length}/${BATCH_SIZE_DEFAULT} unique questions`);
+      console.warn(`⚠️ Only generated ${uniqueQuestions.length}/${BATCH_SIZE_DEFAULT} unique questions for ${chunk.id}`);
     }
-
-    const chunkTags = CHUNK_TAGS[chunk.id]||[];
-    questions.forEach(q => { 
-      q.tags = [...new Set([...q.tags,...chunkTags])]; });
     
-      Store.questionCache.set(chunk.id, questions);
-    return { questions, fromCache: false };
+    // Add chunk tags
+    const chunkTags = CHUNK_TAGS[chunk.id]||[];
+    uniqueQuestions.forEach(q => { 
+      q.tags = [...new Set([...q.tags, ...chunkTags])]; 
+    });
+    
+    // Save to cache
+    QuestionCache.set(chunk.id, uniqueQuestions);
+    
+    return { questions: uniqueQuestions, fromCache: false };
   }
 
-  // Theme
+  // Theme (unchanged)
   const Theme = {
     apply(pref) {
       const root = document.documentElement;
@@ -357,7 +453,7 @@ const App = (() => {
       filtered.forEach(s=>{
         const saved = Store.cards.forChunk(s.id).length;
         const due = saved>0 ? Store.srs.dueCards().filter(c=>c.chunkId===s.id).length : 0;
-        const cached = Store.questionCache.get(s.id)?.length||0;
+        const cached = QuestionCache.get(s.id)?.length||0;
         const card = document.createElement('div');
         card.className = 'topic-card';
         card.innerHTML = `<div class="topic-ch">Ch. ${s.chapter} · pp.${s.start}\u2013${s.end}</div>
@@ -366,6 +462,7 @@ const App = (() => {
             ${saved>0?`${saved} saved`:''}
             ${due>0?`<span class="due-dot"> · ${due} due</span>`:''}
             ${cached>0&&saved===0?`<span class="cached-dot"> · ${cached} cached</span>`:''}
+            ${saved >= MAX_CARDS_PER_CHUNK ? `<span class="full-dot"> · ✓ complete</span>` : ''}
           </div>`;
         card.addEventListener('click',()=>Quiz.generate(s.id));
         grid.appendChild(card);
@@ -390,25 +487,26 @@ const App = (() => {
       this._showState('loading');
       document.getElementById('loading-chapter').textContent = `Ch. ${chunk.chapter}: ${chunk.title}`;
       try {
-        const cached = Store.questionCache.get(chunk.id)||[];
+        const cached = QuestionCache.get(chunk.id)||[];
         const savedQs = new Set(Store.cards.forChunk(chunk.id).map(c=>c.question));
         const unseen = cached.filter(q=>!savedQs.has(q.question));
-        if (unseen.length>0) {
+        
+        if (unseen.length > 0) {
           this.pendingQueue = unseen.slice(1);
           this._present(unseen[0], chunk, true);
         } else {
           const {questions,fromCache} = await callAPI(chunk);
           const existing = Store.cards.forChunk(chunk.id);
-          // const fresh = questions.filter(q=>!isDuplicate(q,existing));
+          
           let fresh;
-          if (!Store.cards.forChunk(chunk.id).length) {
-              fresh = questions; // first run: accept all
+          if (!existing.length) {
+            fresh = questions;
           } else {
-              const existing = Store.cards.forChunk(chunk.id);
-              fresh = questions.filter(q => !isDuplicate(q, existing));
+            fresh = questions.filter(q => !isDuplicate(q, existing));
           }
 
           if (!fresh.length) throw new Error('All generated questions were duplicates. Try another topic.');
+          
           this.pendingQueue = fresh.slice(1);
           this._present(fresh[0], chunk, fromCache);
         }
@@ -652,7 +750,7 @@ const App = (() => {
       const s=Store.stats.get();
       const totalCards=Store.cards.list().length;
       const dueCount=Store.srs.dueCards().length;
-      const cachedChunks=Object.keys(Store.questionCache.all()).length;
+      const cachedChunks=Object.keys(QuestionCache.all()).length;
       const pct=s.totalAnswered?Math.round(s.totalCorrect/s.totalAnswered*100):0;
       const by=s.byChapter||{};
       const weakest=Object.entries(by).filter(([,d])=>d.answered>=3)
@@ -666,7 +764,7 @@ const App = (() => {
         ${weakest.length?`<div class="stat-card wide"><div class="stat-lbl" style="margin-bottom:8px;font-weight:500">Weakest chapters (≥3 attempts)</div>${weakest.map(([id,d])=>{const sec=SECTIONS.find(s=>s.id===id);return`<div class="weak-row"><span>${sec?.title||id}</span><span class="weak-pct">${Math.round(d.correct/d.answered*100)}% (${d.correct}/${d.answered})</span></div>`;}).join('')}</div>`:''}`;
     },
     _export() {
-      const data={version:2,exportDate:new Date().toISOString(),cards:Store.cards.list(),srsStates:Store.srs.all(),questionCache:Store.questionCache.all()};
+      const data={version:2,exportDate:new Date().toISOString(),cards:Store.cards.list(),srsStates:Store.srs.all(),questionCache:QuestionCache.all()};
       const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
       const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
       a.download=`oxford-pallcare-${new Date().toISOString().slice(0,10)}.json`; a.click();
@@ -683,11 +781,12 @@ const App = (() => {
       document.getElementById('daily-review-limit').addEventListener('change',e=>Store.settings.set({dailyReviewLimit:+e.target.value}));
       document.getElementById('reset-api-btn').addEventListener('click',()=>{ Store.api.reset(); ApiBadge.update(); });
       document.getElementById('clear-cache-btn')?.addEventListener('click',()=>{
-        if (confirm('Clear question cache?')){ Store.questionCache.clear(); TopicGrid.render(); }
+        if (confirm('Clear question cache? This will force fresh API calls for cached topics.')){ QuestionCache.clear(); TopicGrid.render(); }
       });
       document.getElementById('nuke-btn').addEventListener('click',()=>{
         if (confirm('Reset ALL data? Cards, SRS, cache, and stats will be deleted.')){
-          ['cards','srs','api','settings','stats','qcache'].forEach(k=>localStorage.removeItem('oxpal_'+k));
+          ['cards','srs','api','settings','stats'].forEach(k=>localStorage.removeItem('oxpal_'+k));
+          QuestionCache.clear();
           location.reload();
         }
       });
@@ -699,6 +798,7 @@ const App = (() => {
     History.init(); Settings.init(); ApiBadge.update();
     setInterval(ApiBadge.update.bind(ApiBadge),60000);
     TopicGrid.updateDueBadge();
+    console.log('✅ Optimized app loaded — API credits will be saved via caching, throttling, and smart duplicate detection');
   }
 
   return { init };
