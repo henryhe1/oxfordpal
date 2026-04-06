@@ -334,7 +334,15 @@ Rules: all answerable from passage; vary question types; plausible but clearly w
         } else {
           const {questions,fromCache} = await callAPI(chunk);
           const existing = Store.cards.forChunk(chunk.id);
-          const fresh = questions.filter(q=>!isDuplicate(q,existing));
+          // const fresh = questions.filter(q=>!isDuplicate(q,existing));
+          let fresh;
+          if (!Store.cards.forChunk(chunk.id).length) {
+              fresh = questions; // first run: accept all
+          } else {
+              const existing = Store.cards.forChunk(chunk.id);
+              fresh = questions.filter(q => !isDuplicate(q, existing));
+          }
+
           if (!fresh.length) throw new Error('All generated questions were duplicates. Try another topic.');
           this.pendingQueue = fresh.slice(1);
           this._present(fresh[0], chunk, fromCache);
