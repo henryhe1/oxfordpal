@@ -22,9 +22,35 @@ const Store = (() => {
     get(cardId)        { return (this.all())[cardId]||SM2.newCard(); },
     set(cardId,state)  { const a=this.all(); a[cardId]=state; set('srs',a); },
     review(cardId,rating) { const u=SM2.review(this.get(cardId),rating); this.set(cardId,u); return u; },
-    dueCards()         {
-      const all=this.all();
-      return cards.list().filter(card=>SM2.isDue(all[card.id]||SM2.newCard()));
+    dueCards() {
+      const allCards = this.list();
+      const due = [];
+      
+      for (const card of allCards) {
+        const srs = this.get(card.id);
+        // A card is due if:
+        // 1. It has no SRS state (new card - but new cards shouldn't appear in due study)
+        // 2. OR it has a dueDate that is today or earlier
+        if (srs && srs.dueDate) {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const dueDate = new Date(srs.dueDate);
+          dueDate.setHours(0, 0, 0, 0);
+          
+          if (dueDate <= today) {
+            due.push(card);
+          }
+        }
+      }
+      
+      // Sort by due date (oldest first)
+      due.sort((a, b) => {
+        const srsA = this.get(a.id);
+        const srsB = this.get(b.id);
+        return new Date(srsA.dueDate) - new Date(srsB.dueDate);
+      });
+      
+      return due;
     },
   };
 

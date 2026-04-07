@@ -1,4 +1,4 @@
-// SM-2 Spaced Repetition Algorithm
+// SM-2 Spaced Repetition Algorithm - FIXED for correct due date comparison
 // Based on SuperMemo 2 (Anki-compatible)
 // Rating: 1=Again, 2=Hard, 3=Good, 4=Easy
 
@@ -15,10 +15,10 @@ const SM2 = {
   },
 
   // Process a rating and return updated card state
-  // rating: 1 (Again), 2 (Hard), 3 (Good), 4 (Easy)
   review(card, rating) {
     const c = { ...card };
     const today = new Date();
+    today.setHours(0, 0, 0, 0); // Normalize to start of day
 
     if (rating === 1) {
       // Fail: reset
@@ -51,10 +51,14 @@ const SM2 = {
       c.repetitions += 1;
     }
 
+    // Set last review to today
     c.lastReview = today.toISOString().slice(0, 10);
+    
+    // Calculate due date
     const due = new Date(today);
     due.setDate(due.getDate() + c.interval);
     c.dueDate = due.toISOString().slice(0, 10);
+    
     return c;
   },
 
@@ -69,11 +73,18 @@ const SM2 = {
     return result;
   },
 
-  // Is this card due today or overdue?
+  // FIX #2: Is this card due today or overdue?
   isDue(card) {
-    if (!card.dueDate) return true; // new card = always due
-    const today = new Date().toISOString().slice(0, 10);
-    return card.dueDate <= today;
+    if (!card || !card.dueDate) return true; // new card = always due
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const dueDate = new Date(card.dueDate);
+    dueDate.setHours(0, 0, 0, 0);
+    
+    // Card is due if due date is today or earlier
+    return dueDate <= today;
   },
 
   // Human-readable interval label

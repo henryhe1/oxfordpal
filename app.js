@@ -5,13 +5,13 @@ console.log("AUTO DEPLOY TEST — OPTIMIZED VERSION WITH DEBUGGING");
 
 // Constants
 const FREE_WINDOW_ESTIMATE = 25;
-let BATCH_SIZE_DEFAULT = 5; // FIX #4: default changed to 5, now user-configurable
+let BATCH_SIZE_DEFAULT = 5; // User configurable batch size
 const SIMILARITY_THRESHOLD = 0.55;
 const MAX_CARDS_PER_CHUNK = 15;
 const CACHE_TTL_DAYS = 7;
 const API_MIN_INTERVAL_MS = 2000;
 
-// FIX #6: EST date helper — used everywhere instead of new Date().toISOString()
+// EST date helper — used everywhere instead of new Date().toISOString()
 function nowEST() {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
 }
@@ -666,23 +666,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
     },
   };
 
-  // API Badge
-  const ApiBadge = {
-    update() {
-      const rem = Store.api.remaining();
-      const el = document.getElementById('api-count');
-      const badge = document.getElementById('api-badge');
-      if (el) el.textContent = rem;
-      if (badge) badge.className = 'api-badge'+(rem<=5?' api-low':rem<=12?' api-med':'');
-      const reset = Store.api.nextReset();
-      const resetEl = document.getElementById('api-reset');
-      if (resetEl && reset) {
-        const diff = reset - Date.now();
-        resetEl.textContent = `resets ${Math.floor(diff/3600000)}h${Math.floor((diff%3600000)/60000)}m`;
-      } else if (resetEl) resetEl.textContent = '';
-    },
-  };
-
   // Topic Grid
   const TopicGrid = {
     activeFilter: 'all',
@@ -745,7 +728,7 @@ Now generate ${batchSize} questions following this EXACT format.`;
         grid.appendChild(card);
       });
     },
-    // FIX #2: update due badge colour — green when 0, red when >0
+    // update due badge colour — green when 0, red when >0
     updateDueBadge() {
       const due = Store.srs.dueCards().length;
       const badge = document.getElementById('due-count');
@@ -764,7 +747,7 @@ Now generate ${batchSize} questions following this EXACT format.`;
   // Quiz
   const Quiz = {
     currentChunk: null,
-    currentCard: null,  // FIX #5: track current card for bad-card deletion
+    currentCard: null,  // track current card for bad-card deletion
     pendingQueue: [],
 
     async generate(chunkId) {
@@ -812,7 +795,7 @@ Now generate ${batchSize} questions following this EXACT format.`;
 
     _present(q, chunk, fromCache) {
       if (!q || !chunk) return;
-      this.currentCard = q;  // FIX #5: track for bad-card button
+      this.currentCard = q;  // track for bad-card button
       this._showState('content');
       const ansCard = document.getElementById('ans-card');
       const savedNote = document.getElementById('saved-note');
@@ -848,7 +831,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
         });
       }
 
-      // FIX #4/#1: Next Question vs Generate More buttons
       const nextBtn = document.getElementById('next-btn');
       const generateBtn = document.getElementById('generate-btn');
 
@@ -874,13 +856,11 @@ Now generate ${batchSize} questions following this EXACT format.`;
           nextBtn.style.display = 'none';
         }
       }
-
       if (generateBtn) {
         generateBtn.style.display = 'inline-flex';
         generateBtn.textContent = 'Generate More';
         generateBtn.onclick = () => this.generate(chunk.id);
       }
-
     },
 
     _answer(letter, q, chunk) {
@@ -902,7 +882,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
       }
       const explanation = document.getElementById('ans-explanation');
       if (explanation) {
-        // FIX #3: show explanation + why wrong distractors
         let fullExpl = q.explanation || '';
         if (q.whyWrong) {
           fullExpl += `\n\n💡 Why others are wrong:\n${q.whyWrong}`;
@@ -929,7 +908,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
         btn.onclick=()=>{ Store.srs.review(cardId,parseInt(btn.dataset.rating)); if(srButtons) srButtons.style.display='none'; };
       });
 
-      // FIX #5: show bad-card button after answer, wire up deletion
       const badCardBtn = document.getElementById('bad-card-btn');
       if (badCardBtn) {
         badCardBtn.style.display = 'inline-flex';
@@ -1002,14 +980,28 @@ Now generate ${batchSize} questions following this EXACT format.`;
   const DueStudy = {
     queue:[], index:0,
     start() {
-      this.queue = Store.srs.dueCards(); this.index=0;
+      // Only include cards that are actually due TODAY or earlier
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const allDue = Store.srs.dueCards();
+      this.queue = allDue.filter(card => {
+        const srs = Store.srs.get(card.id);
+        if (!srs || !srs.dueDate) return false;
+        const dueDate = new Date(srs.dueDate);
+        dueDate.setHours(0, 0, 0, 0);
+        return dueDate <= today;
+      });
+      
+      this.index = 0;
+
       const hasCards = this.queue.length>0;
       const empty = document.getElementById('due-empty');
       const content = document.getElementById('due-content');
       if (empty) empty.style.display = hasCards?'none':'block';
       if (content) content.style.display = hasCards?'block':'none';
       
-      // FIX #1: wire up go-topics-btn (empty state) and due-back-topics-btn (always visible)
+      // go-topics-btn (empty state)
       const goTopicsBtn = document.getElementById('go-topics-btn');
       if (goTopicsBtn) goTopicsBtn.onclick = () => Nav.show('home');
       if (hasCards) this._show();
@@ -1066,7 +1058,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
       }
       const explanation = document.getElementById('due-explanation');
       if (explanation) {
-        // FIX #3: show why wrong in due study too
         let fullExpl = card.explanation || '';
         if (card.whyWrong) {
           fullExpl += `\n\n💡 Why others are wrong:\n${card.whyWrong}`;
@@ -1088,7 +1079,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
       Store.sessionStats.record(isCorrect,{chunkId:card.chunkId,chapterTitle:card.chapterTitle,question:card.question,correct:isCorrect,answer:card.answer,selected:letter});
       Store.stats.record(card.chunkId,isCorrect);
 
-      // FIX #5: bad-card button in due study
       const dueBadCardBtn = document.getElementById('due-bad-card-btn');
       if (dueBadCardBtn) {
         dueBadCardBtn.style.display = 'inline-flex';
@@ -1180,12 +1170,45 @@ Now generate ${batchSize} questions following this EXACT format.`;
     },
     
     render() {
-      const savedCount = document.getElementById('saved-count');
-      if (savedCount) savedCount.textContent=Store.cards.list().length;
-      if (this.activeTab==='session') this._renderSession();
-      if (this.activeTab==='saved') this._renderSaved();
-      if (this.activeTab==='stats') this._renderStats();
-    },
+      const q = document.getElementById('search-input')?.value.toLowerCase() || '';
+        const filtered = typeof SECTIONS !== 'undefined' ? SECTIONS.filter(s=>{
+          const matchSec = this.activeFilter==='all'||s.section===this.activeFilter;
+          const matchQ = !q||s.title.toLowerCase().includes(q)||s.chapter.includes(q)||s.sectionLabel.toLowerCase().includes(q);
+          return matchSec&&matchQ;
+        }) : [];
+        const grid = document.getElementById('topic-grid');
+        if (!grid) return;
+        grid.innerHTML = '';
+        if (!filtered.length) { grid.innerHTML='<p class="empty-hint" style="grid-column:1/-1">No topics match.</p>'; return; }
+        filtered.forEach(s=>{
+          const saved = Store.cards.forChunk(s.id).length;
+          const due = saved>0 ? Store.srs.dueCards().filter(c=>c.chunkId===s.id).length : 0;
+          const cachedRaw = localStorage.getItem(`oxpal_qcache_${s.id}`);
+          let cached = 0;
+          if (cachedRaw) {
+            try {
+              const parsed = JSON.parse(cachedRaw);
+              cached = parsed.data ? parsed.data.length : 0;
+            } catch(e) { cached = 0; }
+          }
+          
+          const card = document.createElement('div');
+          card.className = 'topic-card';
+          card.innerHTML = `<div class="topic-ch">Ch. ${s.chapter} · pp.${s.start}\u2013${s.end}</div>
+            <div class="topic-title">${s.title}</div>
+            <div class="topic-meta">
+              ${saved>0?`${saved} saved`:''}
+              ${due>0?`<span class="due-dot"> · ${due} due</span>`:''}
+              ${cached>0 && saved===0 ? `<span class="cached-dot"> · ${cached} cached</span>` : ''}
+              ${cached>0 && saved>0 ? `<span class="cached-dot"> · ${cached} available</span>` : ''}
+              ${saved >= MAX_CARDS_PER_CHUNK ? `<span class="full-dot"> · ✓ complete</span>` : ''}
+            </div>`;
+          card.addEventListener('click',()=>Quiz.generate(s.id));
+          grid.appendChild(card);
+        });
+      },
+
+
     _renderSession() {
       const h=Store.sessionStats;
       const bar=document.getElementById('score-bar');
@@ -1355,7 +1378,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
         dailyReviewLimit.addEventListener('change',e=>Store.settings.set({dailyReviewLimit:+e.target.value}));
       }
 
-      // FIX #4: batch size setting
       const batchSizeInput = document.getElementById('batch-size-input');
       if (batchSizeInput) {
         batchSizeInput.value = s.batchSize || BATCH_SIZE_DEFAULT;
@@ -1369,7 +1391,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
         if (s.batchSize) BATCH_SIZE_DEFAULT = s.batchSize;
       }
 
-      // FIX #1: Clear cache button - COMPLETELY REWRITTEN
       const clearCacheBtn = document.getElementById('clear-cache-btn');
       if(clearCacheBtn) {
         clearCacheBtn.addEventListener('click', (e) => {
