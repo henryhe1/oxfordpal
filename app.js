@@ -725,7 +725,7 @@ Now generate ${batchSize} questions following this EXACT format.`;
         
         card.innerHTML = `<div class="topic-ch">Ch. ${s.chapter} · pp.${s.start}\u2013${s.end}</div>
           <div class="topic-title">${s.title}</div>
-          <div class="topic-meta">${metaHtml || '📭 no cards'}</div>`;
+          <div class="topic-meta">${metaHtml || ''}</div>`;
         card.addEventListener('click',()=>Quiz.generate(s.id));
         grid.appendChild(card);
       });
