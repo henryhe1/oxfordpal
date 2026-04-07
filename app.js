@@ -881,8 +881,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
         generateBtn.onclick = () => this.generate(chunk.id);
       }
 
-      const sameTopicBtn = document.getElementById('same-topic-btn');
-      if (sameTopicBtn) sameTopicBtn.onclick = ()=>this.generate(chunk.id);
     },
 
     _answer(letter, q, chunk) {
@@ -1010,11 +1008,10 @@ Now generate ${batchSize} questions following this EXACT format.`;
       const content = document.getElementById('due-content');
       if (empty) empty.style.display = hasCards?'none':'block';
       if (content) content.style.display = hasCards?'block':'none';
+      
       // FIX #1: wire up go-topics-btn (empty state) and due-back-topics-btn (always visible)
       const goTopicsBtn = document.getElementById('go-topics-btn');
       if (goTopicsBtn) goTopicsBtn.onclick = () => Nav.show('home');
-      const dueBackBtn = document.getElementById('due-back-topics-btn');
-      if (dueBackBtn) dueBackBtn.onclick = () => Nav.show('home');
       if (hasCards) this._show();
     },
     _show() {
@@ -1372,12 +1369,36 @@ Now generate ${batchSize} questions following this EXACT format.`;
         if (s.batchSize) BATCH_SIZE_DEFAULT = s.batchSize;
       }
 
-      const resetApiBtn = document.getElementById('reset-api-btn');
-      if(resetApiBtn) resetApiBtn.addEventListener('click',()=>{ Store.api.reset(); ApiBadge.update(); });
+      // FIX #1: Clear cache button - COMPLETELY REWRITTEN
       const clearCacheBtn = document.getElementById('clear-cache-btn');
-      if(clearCacheBtn) clearCacheBtn.addEventListener('click',()=>{
-        if (confirm('Clear question cache? This will force fresh API calls for cached topics.')){ QuestionCache.clear(); TopicGrid.render(); }
-      });
+      if(clearCacheBtn) {
+        clearCacheBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          const cacheSize = Object.keys(QuestionCache.all()).length;
+          if (confirm(`Clear ${cacheSize} cached question sets? This will NOT delete your saved cards, but will require fresh API calls for topics you've generated before.`)) {
+            // Clear the question cache
+            QuestionCache.clear();
+            
+            // Also clear any pending queues in Quiz
+            if (Quiz && Quiz.pendingQueue) {
+              Quiz.pendingQueue = [];
+            }
+            
+            // Show success message
+            const clearMsg = document.createElement('div');
+            clearMsg.textContent = `✅ Cleared ${cacheSize} cached question sets!`;
+            clearMsg.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#28a745;color:white;padding:12px 20px;border-radius:8px;z-index:9999;animation:fadeOut 2s forwards;box-shadow:0 2px 10px rgba(0,0,0,0.2);';
+            document.body.appendChild(clearMsg);
+            setTimeout(() => clearMsg.remove(), 2000);
+            
+            // Refresh the topic grid to update cached indicators
+            TopicGrid.render();
+            
+            console.log('Cache cleared. Remaining cached chunks:', QuestionCache.all());
+          }
+        });
+      }
+
       const nukeBtn = document.getElementById('nuke-btn');
       if(nukeBtn) nukeBtn.addEventListener('click',()=>{
         if (confirm('Reset ALL data? Cards, SRS, cache, and stats will be deleted.')){
