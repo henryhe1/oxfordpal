@@ -328,7 +328,6 @@ const App = (() => {
           if (!answerMatch) continue;
           const answer = answerMatch[1].toUpperCase();
           
-          // FIX #3: parse EXPLANATION and WHY_WRONG separately
           const explanationMatch = block.match(/EXPLANATION:\s*([\s\S]*?)(?=WHY_WRONG:|TAGS:|SOURCE:|PAGE:|$)/i);
           const explanation = explanationMatch ? explanationMatch[1].trim() : 'No explanation provided.';
 
@@ -455,7 +454,6 @@ const App = (() => {
     const cached = QuestionCache.get(chunk.id);
     if (cached && cached.length > 0) {
       console.log(`Using cached questions for chunk ${chunk.id}`);
-      // FIX: deduplicate against saved cards even when serving from cache
       const existing = Store.cards.forChunk(chunk.id);
       const fresh = existing.length ? cached.filter(q => !isDuplicate(q, existing)) : cached;
       return { questions: fresh, fromCache: true };
@@ -477,10 +475,8 @@ const App = (() => {
         `\nGenerate COMPLETELY NEW questions on different subtopics.\n`
       : '';
 
-    // FIX #4: use runtime BATCH_SIZE_DEFAULT (now user-configurable)
     const batchSize = BATCH_SIZE_DEFAULT;
 
-    // FIX #3: updated prompt to include WHY_WRONG field
     const prompt = `You are an expert medical educator creating high-quality multiple-choice questions for palliative medicine.
 
 Using ONLY the information in the passage below, generate ${batchSize} single-best-answer exam questions.
@@ -666,6 +662,23 @@ Now generate ${batchSize} questions following this EXACT format.`;
     },
   };
 
+  // API Badge
+  const ApiBadge = {
+    update() {
+      const rem = Store.api.remaining();
+      const el = document.getElementById('api-count');
+      const badge = document.getElementById('api-badge');
+      if (el) el.textContent = rem;
+      if (badge) badge.className = 'api-badge'+(rem<=5?' api-low':rem<=12?' api-med':'');
+      const reset = Store.api.nextReset();
+      const resetEl = document.getElementById('api-reset');
+      if (resetEl && reset) {
+        const diff = reset - Date.now();
+        resetEl.textContent = `resets ${Math.floor(diff/3600000)}h${Math.floor((diff%3600000)/60000)}m`;
+      } else if (resetEl) resetEl.textContent = '';
+    },
+  };
+
   // Topic Grid
   const TopicGrid = {
     activeFilter: 'all',
@@ -712,42 +725,71 @@ Now generate ${batchSize} questions following this EXACT format.`;
       if (!filtered.length) { grid.innerHTML='<p class="empty-hint" style="grid-column:1/-1">No topics match.</p>'; return; }
       filtered.forEach(s=>{
         const saved = Store.cards.forChunk(s.id).length;
-        const due = saved>0 ? Store.srs.dueCards().filter(c=>c.chunkId===s.id).length : 0;
-        const cached = QuestionCache.get(s.id)?.length||0;
+        const dueCount = Store.srs.dueCards().filter(c=>c.chunkId===s.id).length;
+        
+        // Get cached count directly from localStorage
+        let cached = 0;
+        const cachedRaw = localStorage.getItem(`oxpal_qcache_${s.id}`);
+        if (cachedRaw) {
+          try {
+            const parsed = JSON.parse(cachedRaw);
+            cached = parsed.data ? parsed.data.length : 0;
+          } catch(e) { cached = 0; }
+        }
+        
         const card = document.createElement('div');
         card.className = 'topic-card';
+        
+        // Build meta display with both saved and cached counts
+        let metaHtml = '';
+        if (saved > 0) metaHtml += `<span class="saved-count">📘 ${saved} saved</span>`;
+        if (cached > 0) metaHtml += `<span class="cached-count">💾 ${cached} cached</span>`;
+        if (dueCount > 0) metaHtml += `<span class="due-dot">⏰ ${dueCount} due</span>`;
+        if (saved >= MAX_CARDS_PER_CHUNK) metaHtml += `<span class="full-dot">✓ complete</span>`;
+        
         card.innerHTML = `<div class="topic-ch">Ch. ${s.chapter} · pp.${s.start}\u2013${s.end}</div>
           <div class="topic-title">${s.title}</div>
-          <div class="topic-meta">
-            ${saved>0?`${saved} saved`:''}
-            ${due>0?`<span class="due-dot"> · ${due} due</span>`:''}
-            ${cached>0&&saved===0?`<span class="cached-dot"> · ${cached} cached</span>`:''}
-            ${saved >= MAX_CARDS_PER_CHUNK ? `<span class="full-dot"> · ✓ complete</span>` : ''}
-          </div>`;
+          <div class="topic-meta">${metaHtml || '📭 no cards'}</div>`;
         card.addEventListener('click',()=>Quiz.generate(s.id));
         grid.appendChild(card);
       });
     },
-    // update due badge colour — green when 0, red when >0
     updateDueBadge() {
-      const due = Store.srs.dueCards().length;
+      // Get accurate due count using date comparison
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const allCards = Store.cards.list();
+      let dueCount = 0;
+      for (const card of allCards) {
+        const srs = Store.srs.get(card.id);
+        if (srs && srs.dueDate) {
+          const dueDate = new Date(srs.dueDate);
+          dueDate.setHours(0, 0, 0, 0);
+          if (dueDate <= today) {
+            dueCount++;
+          }
+        }
+      }
+      
       const badge = document.getElementById('due-count');
       const navBtn = document.querySelector('.nav-btn[data-view="due"]');
       if (badge) {
-        badge.textContent = due > 0 ? due : '0';
+        badge.textContent = dueCount > 0 ? dueCount : '0';
         badge.style.display = 'inline-flex';
-        badge.className = due > 0 ? 'due-badge due-badge-red' : 'due-badge due-badge-green';
+        badge.className = dueCount > 0 ? 'due-badge due-badge-red' : 'due-badge due-badge-green';
       }
       if (navBtn) {
-        navBtn.classList.toggle('nav-btn-due-clear', due === 0);
+        navBtn.classList.toggle('nav-btn-due-clear', dueCount === 0);
       }
+      return dueCount;
     },
   };
 
   // Quiz
   const Quiz = {
     currentChunk: null,
-    currentCard: null,  // track current card for bad-card deletion
+    currentCard: null,
     pendingQueue: [],
 
     async generate(chunkId) {
@@ -795,7 +837,7 @@ Now generate ${batchSize} questions following this EXACT format.`;
 
     _present(q, chunk, fromCache) {
       if (!q || !chunk) return;
-      this.currentCard = q;  // track for bad-card button
+      this.currentCard = q;
       this._showState('content');
       const ansCard = document.getElementById('ans-card');
       const savedNote = document.getElementById('saved-note');
@@ -806,7 +848,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
       const srButtons = document.getElementById('sr-buttons');
       if (srButtons) srButtons.style.display = 'none';
 
-      // Hide bad-card button until answer is revealed
       const badCardBtn = document.getElementById('bad-card-btn');
       if (badCardBtn) badCardBtn.style.display = 'none';
 
@@ -914,8 +955,7 @@ Now generate ${batchSize} questions following this EXACT format.`;
         badCardBtn.onclick = () => {
           if (confirm('Delete this card? It will be removed from your deck and cannot be recovered.')) {
             Store.cards.delete(cardId);
-            Store.srs.set(cardId, undefined); // remove SRS state
-            // Also remove from cache so it won't reappear
+            Store.srs.set(cardId, undefined);
             const chunkCache = QuestionCache.get(chunk.id) || [];
             const filtered = chunkCache.filter(cq => cq.question !== q.question);
             QuestionCache.set(chunk.id, filtered);
@@ -944,7 +984,7 @@ Now generate ${batchSize} questions following this EXACT format.`;
         options:q.options, answer:q.answer, explanation:q.explanation,
         whyWrong: q.whyWrong || '',
         tags:q.tags||[], source:q.source,
-        createdAt: nowESTISO()  // FIX #6: use EST
+        createdAt: nowESTISO()
       });
       const savedNote = document.getElementById('saved-note');
       if (savedNote) savedNote.style.display='block';
@@ -984,42 +1024,50 @@ Now generate ${batchSize} questions following this EXACT format.`;
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       
-      const allDue = Store.srs.dueCards();
-      this.queue = allDue.filter(card => {
+      const allCards = Store.cards.list();
+      const dueCards = [];
+      for (const card of allCards) {
         const srs = Store.srs.get(card.id);
-        if (!srs || !srs.dueDate) return false;
-        const dueDate = new Date(srs.dueDate);
-        dueDate.setHours(0, 0, 0, 0);
-        return dueDate <= today;
-      });
+        if (srs && srs.dueDate) {
+          const dueDate = new Date(srs.dueDate);
+          dueDate.setHours(0, 0, 0, 0);
+          if (dueDate <= today) {
+            dueCards.push(card);
+          }
+        }
+      }
       
+      this.queue = dueCards;
       this.index = 0;
 
-      const hasCards = this.queue.length>0;
+      const hasCards = this.queue.length > 0;
       const empty = document.getElementById('due-empty');
       const content = document.getElementById('due-content');
       if (empty) empty.style.display = hasCards?'none':'block';
       if (content) content.style.display = hasCards?'block':'none';
       
-      // go-topics-btn (empty state)
       const goTopicsBtn = document.getElementById('go-topics-btn');
       if (goTopicsBtn) goTopicsBtn.onclick = () => Nav.show('home');
+      const dueBackBtn = document.getElementById('due-back-topics-btn');
+      if (dueBackBtn) dueBackBtn.onclick = () => Nav.show('home');
+      
+      TopicGrid.updateDueBadge();
+      
       if (hasCards) this._show();
     },
     _show() {
       const card = this.queue[this.index];
       if (!card) { this.start(); return; }
-      const pct = Math.round(this.index/this.queue.length*100);
+      const pct = Math.round((this.index + 1) / this.queue.length * 100);
       const progressFill = document.getElementById('due-progress-fill');
       const progressTxt = document.getElementById('due-progress-txt');
       if (progressFill) progressFill.style.width = pct+'%';
-      if (progressTxt) progressTxt.textContent = `${this.index} / ${this.queue.length}`;
+      if (progressTxt) progressTxt.textContent = `${this.index + 1} / ${this.queue.length}`;
       const ansCard = document.getElementById('due-ans-card');
       if (ansCard) ansCard.style.display='none';
       const hint = document.getElementById('due-hint');
       if (hint) hint.style.display='block';
 
-      // FIX #5: hide bad-card button for due study until answered
       const dueBadCardBtn = document.getElementById('due-bad-card-btn');
       if (dueBadCardBtn) dueBadCardBtn.style.display = 'none';
 
@@ -1086,12 +1134,10 @@ Now generate ${batchSize} questions following this EXACT format.`;
           if (confirm('Delete this card? It will be removed from your deck and cannot be recovered.')) {
             Store.cards.delete(card.id);
             Store.srs.set(card.id, undefined);
-            // Remove from cache
             const chunkCache = QuestionCache.get(card.chunkId) || [];
             const filtered = chunkCache.filter(cq => cq.question !== card.question);
             QuestionCache.set(card.chunkId, filtered);
             dueBadCardBtn.style.display = 'none';
-            // Advance to next card
             this.queue.splice(this.index, 1);
             TopicGrid.render();
             TopicGrid.updateDueBadge();
@@ -1109,7 +1155,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
         Store.srs.review(card.id,rating);
         this.index++;
         if (this.index>=this.queue.length) {
-          // FIX #2: refresh badge when deck is complete
           TopicGrid.updateDueBadge();
           this.start();
         } else {
@@ -1170,45 +1215,13 @@ Now generate ${batchSize} questions following this EXACT format.`;
     },
     
     render() {
-      const q = document.getElementById('search-input')?.value.toLowerCase() || '';
-        const filtered = typeof SECTIONS !== 'undefined' ? SECTIONS.filter(s=>{
-          const matchSec = this.activeFilter==='all'||s.section===this.activeFilter;
-          const matchQ = !q||s.title.toLowerCase().includes(q)||s.chapter.includes(q)||s.sectionLabel.toLowerCase().includes(q);
-          return matchSec&&matchQ;
-        }) : [];
-        const grid = document.getElementById('topic-grid');
-        if (!grid) return;
-        grid.innerHTML = '';
-        if (!filtered.length) { grid.innerHTML='<p class="empty-hint" style="grid-column:1/-1">No topics match.</p>'; return; }
-        filtered.forEach(s=>{
-          const saved = Store.cards.forChunk(s.id).length;
-          const due = saved>0 ? Store.srs.dueCards().filter(c=>c.chunkId===s.id).length : 0;
-          const cachedRaw = localStorage.getItem(`oxpal_qcache_${s.id}`);
-          let cached = 0;
-          if (cachedRaw) {
-            try {
-              const parsed = JSON.parse(cachedRaw);
-              cached = parsed.data ? parsed.data.length : 0;
-            } catch(e) { cached = 0; }
-          }
-          
-          const card = document.createElement('div');
-          card.className = 'topic-card';
-          card.innerHTML = `<div class="topic-ch">Ch. ${s.chapter} · pp.${s.start}\u2013${s.end}</div>
-            <div class="topic-title">${s.title}</div>
-            <div class="topic-meta">
-              ${saved>0?`${saved} saved`:''}
-              ${due>0?`<span class="due-dot"> · ${due} due</span>`:''}
-              ${cached>0 && saved===0 ? `<span class="cached-dot"> · ${cached} cached</span>` : ''}
-              ${cached>0 && saved>0 ? `<span class="cached-dot"> · ${cached} available</span>` : ''}
-              ${saved >= MAX_CARDS_PER_CHUNK ? `<span class="full-dot"> · ✓ complete</span>` : ''}
-            </div>`;
-          card.addEventListener('click',()=>Quiz.generate(s.id));
-          grid.appendChild(card);
-        });
-      },
-
-
+      const savedCount = document.getElementById('saved-count');
+      if (savedCount) savedCount.textContent = Store.cards.list().length;
+      if (this.activeTab === 'session') this._renderSession();
+      if (this.activeTab === 'saved') this._renderSaved();
+      if (this.activeTab === 'stats') this._renderStats();
+    },
+    
     _renderSession() {
       const h=Store.sessionStats;
       const bar=document.getElementById('score-bar');
@@ -1299,7 +1312,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
             return;
           }
 
-          // 1. IMPORT CARDS
           let importedCards = 0;
           let skippedCards = 0;
           const existingCards = Store.cards.list();
@@ -1314,7 +1326,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
             importedCards++;
           });
 
-          // 2. IMPORT SRS STATES
           if (data.srsStates && typeof data.srsStates === 'object') {
             Object.entries(data.srsStates).forEach(([cardId, state]) => {
               if (Store.cards.list().some(c => c.id === cardId)) {
@@ -1323,7 +1334,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
             });
           }
 
-          // 3. MERGE QUESTION CACHE
           if (data.questionCache && typeof data.questionCache === 'object') {
             const allImportedCards = Store.cards.list();
             Object.entries(data.questionCache).forEach(([chunkId, questions]) => {
@@ -1340,7 +1350,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
             });
           }
 
-          // 4. REFRESH UI
           TopicGrid.render();
           TopicGrid.updateDueBadge();
           this.render();
@@ -1387,7 +1396,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
           BATCH_SIZE_DEFAULT = val;
           Store.settings.set({ batchSize: val });
         });
-        // Apply saved setting on load
         if (s.batchSize) BATCH_SIZE_DEFAULT = s.batchSize;
       }
 
@@ -1397,24 +1405,16 @@ Now generate ${batchSize} questions following this EXACT format.`;
           e.preventDefault();
           const cacheSize = Object.keys(QuestionCache.all()).length;
           if (confirm(`Clear ${cacheSize} cached question sets? This will NOT delete your saved cards, but will require fresh API calls for topics you've generated before.`)) {
-            // Clear the question cache
             QuestionCache.clear();
-            
-            // Also clear any pending queues in Quiz
             if (Quiz && Quiz.pendingQueue) {
               Quiz.pendingQueue = [];
             }
-            
-            // Show success message
             const clearMsg = document.createElement('div');
             clearMsg.textContent = `✅ Cleared ${cacheSize} cached question sets!`;
             clearMsg.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#28a745;color:white;padding:12px 20px;border-radius:8px;z-index:9999;animation:fadeOut 2s forwards;box-shadow:0 2px 10px rgba(0,0,0,0.2);';
             document.body.appendChild(clearMsg);
             setTimeout(() => clearMsg.remove(), 2000);
-            
-            // Refresh the topic grid to update cached indicators
             TopicGrid.render();
-            
             console.log('Cache cleared. Remaining cached chunks:', QuestionCache.all());
           }
         });
