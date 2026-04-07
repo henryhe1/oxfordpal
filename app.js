@@ -5,11 +5,27 @@ console.log("AUTO DEPLOY TEST — OPTIMIZED VERSION WITH DEBUGGING");
 
 // Constants
 const FREE_WINDOW_ESTIMATE = 25;
-const BATCH_SIZE_DEFAULT   = 7;
+let BATCH_SIZE_DEFAULT = 5; // FIX #4: default changed to 5, now user-configurable
 const SIMILARITY_THRESHOLD = 0.55;
 const MAX_CARDS_PER_CHUNK = 15;
 const CACHE_TTL_DAYS = 7;
 const API_MIN_INTERVAL_MS = 2000;
+
+// FIX #6: EST date helper — used everywhere instead of new Date().toISOString()
+function nowEST() {
+  return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+}
+function todayEST() {
+  const d = nowEST();
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function nowESTISO() {
+  const d = nowEST();
+  return d.toISOString().replace(/\.\d{3}Z$/, '') + '-05:00';
+}
 
 // Enable debug mode to see API responses
 const DEBUG_MODE = true;
@@ -110,18 +126,15 @@ const AutoSave = {
   init() {
     if (!this.enabled) return;
     
-    // Set up auto-save interval
     this.interval = setInterval(() => {
       this.saveToLocalStorage();
       console.log(`Auto-saved ${Store.cards.list().length} cards at ${new Date().toLocaleTimeString()}`);
     }, this.saveIntervalMinutes * 60 * 1000);
     
-    // Save on page unload
     window.addEventListener('beforeunload', () => {
       this.saveToLocalStorage();
     });
     
-    // Try to recover from crash
     this.checkForCrashRecovery();
   },
   
@@ -155,7 +168,6 @@ const AutoSave = {
     }
   }
 };
-// 👆 END OF AUTO-SAVE
 
 const App = (() => {
 
@@ -272,7 +284,6 @@ const App = (() => {
     return false;
   }
 
-  // ENHANCED: Multiple parsing strategies
   function parseResponse(text) {
     if (!text || typeof text !== 'string') {
       console.error('Invalid response text:', text);
@@ -286,7 +297,6 @@ const App = (() => {
     
     const questions = [];
     
-    // Strategy 1: Look for Q1:, Q2:, etc. pattern
     try {
       const blocks = text.split(/(?=Q\d+:|QUESTION\s*\d+:)/i);
       
@@ -294,13 +304,11 @@ const App = (() => {
         if (!block || block.trim().length < 50) continue;
         
         try {
-          // Extract question text
           let questionMatch = block.match(/(?:Q\d+:|QUESTION\s*\d+:)\s*([^\n]+)/i);
           if (!questionMatch) continue;
           
           const questionText = questionMatch[1].trim();
           
-          // Extract options (A., B., C., D., E.)
           const optionsMatch = block.match(/OPTIONS:\s*([\s\S]*?)(?=ANSWER:|EXPLANATION:|TAGS:|SOURCE:|PAGE:|$)/i);
           let options = [];
           if (optionsMatch) {
@@ -316,27 +324,26 @@ const App = (() => {
           
           if (options.length < 2) continue;
           
-          // Extract answer
           const answerMatch = block.match(/ANSWER:\s*([A-E])/i);
           if (!answerMatch) continue;
           const answer = answerMatch[1].toUpperCase();
           
-          // Extract explanation
-          const explanationMatch = block.match(/EXPLANATION:\s*([\s\S]*?)(?=TAGS:|SOURCE:|PAGE:|$)/i);
+          // FIX #3: parse EXPLANATION and WHY_WRONG separately
+          const explanationMatch = block.match(/EXPLANATION:\s*([\s\S]*?)(?=WHY_WRONG:|TAGS:|SOURCE:|PAGE:|$)/i);
           const explanation = explanationMatch ? explanationMatch[1].trim() : 'No explanation provided.';
+
+          const whyWrongMatch = block.match(/WHY_WRONG:\s*([\s\S]*?)(?=TAGS:|SOURCE:|PAGE:|$)/i);
+          const whyWrong = whyWrongMatch ? whyWrongMatch[1].trim() : '';
           
-          // Extract tags
           const tagsMatch = block.match(/TAGS:\s*([\s\S]*?)(?=SOURCE:|PAGE:|$)/i);
           let tags = [];
           if (tagsMatch) {
             tags = tagsMatch[1].split(/[,;]/).map(t => t.trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean);
           }
           
-          // Extract source
           const sourceMatch = block.match(/SOURCE:\s*([^\n]+)/i);
           const source = sourceMatch ? sourceMatch[1].trim() : 'Oxford Textbook of Palliative Medicine, 6th Ed.';
           
-          // Extract pages
           const pagesMatch = block.match(/PAGE:\s*([^\n]+)/i);
           const pages = pagesMatch ? pagesMatch[1].trim() : '';
           
@@ -345,6 +352,7 @@ const App = (() => {
             options: options,
             answer: answer,
             explanation: explanation,
+            whyWrong: whyWrong,
             tags: tags,
             source: source,
             pages: pages
@@ -359,7 +367,6 @@ const App = (() => {
       console.error('Strategy 1 failed:', e);
     }
     
-    // Strategy 2: Look for numbered lists without Q prefix
     if (questions.length === 0) {
       console.log('Strategy 1 failed, trying Strategy 2...');
       try {
@@ -372,16 +379,15 @@ const App = (() => {
           const line = lines[i].trim();
           if (!line) continue;
           
-          // Look for numbered question (1., 2., etc.)
           const numMatch = line.match(/^(\d+)[.)]\s+(.+)/);
           if (numMatch && !inOptions) {
-            // Save previous question
             if (currentQuestion && currentOptions.length >= 2) {
               questions.push({
                 question: currentQuestion,
                 options: [...currentOptions],
                 answer: '',
                 explanation: '',
+                whyWrong: '',
                 tags: [],
                 source: 'Oxford Textbook of Palliative Medicine, 6th Ed.',
                 pages: ''
@@ -391,11 +397,9 @@ const App = (() => {
             currentOptions = [];
             inOptions = true;
           }
-          // Look for options (A., B., etc.)
           else if (inOptions && line.match(/^[A-E][.)]\s+/i)) {
             currentOptions.push(line);
           }
-          // Look for answer line
           else if (line.match(/^answer:/i) && currentQuestion) {
             const ansMatch = line.match(/answer:\s*([A-E])/i);
             if (ansMatch && questions.length > 0) {
@@ -403,16 +407,10 @@ const App = (() => {
             }
             inOptions = false;
           }
-          // Look for explanation
           else if (line.match(/^explanation:/i) && questions.length > 0) {
             const expText = line.replace(/^explanation:/i, '').trim();
             questions[questions.length - 1].explanation = expText;
           }
-        }
-        
-        // Save last question
-        if (currentQuestion && currentOptions.length >= 2 && questions.length > 0) {
-          // Already saved above
         }
       } catch (e) {
         console.error('Strategy 2 failed:', e);
@@ -421,7 +419,6 @@ const App = (() => {
     
     console.log(`Parsed ${questions.length} questions`);
     
-    // Filter out incomplete questions
     const validQuestions = questions.filter(q => 
       q.question && 
       q.options && q.options.length >= 2 && 
@@ -437,23 +434,18 @@ const App = (() => {
 
   console.log("CALLING API", API_PROXY_URL);
 
-  // Add this temporary debug function to see the raw API response
   function debugAPIResponse(text, chunkId) {
-  console.log(`=== DEBUG: API Response for ${chunkId} ===`);
-  console.log('Raw response length:', text.length);
-  console.log('First 1000 chars:', text.substring(0, 1000));
-  console.log('Last 500 chars:', text.substring(text.length - 500));
-  console.log('Contains "Q1":', text.includes('Q1'));
-  console.log('Contains "QUESTION":', text.includes('QUESTION'));
-  console.log('Contains "OPTIONS":', text.includes('OPTIONS'));
-  
-  // Save to localStorage for inspection
-  localStorage.setItem('oxpal_debug_response', text);
-  console.log('Full response saved to localStorage key: oxpal_debug_response');
-  
-  return text;
-}
-
+    console.log(`=== DEBUG: API Response for ${chunkId} ===`);
+    console.log('Raw response length:', text.length);
+    console.log('First 1000 chars:', text.substring(0, 1000));
+    console.log('Last 500 chars:', text.substring(text.length - 500));
+    console.log('Contains "Q1":', text.includes('Q1'));
+    console.log('Contains "QUESTION":', text.includes('QUESTION'));
+    console.log('Contains "OPTIONS":', text.includes('OPTIONS'));
+    localStorage.setItem('oxpal_debug_response', text);
+    console.log('Full response saved to localStorage key: oxpal_debug_response');
+    return text;
+  }
 
   async function callAPI(chunk) {
     if (!chunk || !chunk.id) {
@@ -463,7 +455,10 @@ const App = (() => {
     const cached = QuestionCache.get(chunk.id);
     if (cached && cached.length > 0) {
       console.log(`Using cached questions for chunk ${chunk.id}`);
-      return { questions: cached, fromCache: true };
+      // FIX: deduplicate against saved cards even when serving from cache
+      const existing = Store.cards.forChunk(chunk.id);
+      const fresh = existing.length ? cached.filter(q => !isDuplicate(q, existing)) : cached;
+      return { questions: fresh, fromCache: true };
     }
 
     const existingCards = Store.cards.forChunk(chunk.id);
@@ -482,9 +477,13 @@ const App = (() => {
         `\nGenerate COMPLETELY NEW questions on different subtopics.\n`
       : '';
 
+    // FIX #4: use runtime BATCH_SIZE_DEFAULT (now user-configurable)
+    const batchSize = BATCH_SIZE_DEFAULT;
+
+    // FIX #3: updated prompt to include WHY_WRONG field
     const prompt = `You are an expert medical educator creating high-quality multiple-choice questions for palliative medicine.
 
-Using ONLY the information in the passage below, generate ${BATCH_SIZE_DEFAULT} single-best-answer exam questions.
+Using ONLY the information in the passage below, generate ${batchSize} single-best-answer exam questions.
 
 Passage (Ch. ${chunk.chapter}: ${chunk.title}, pp.${chunk.start}\u2013${chunk.end}):
 ${chunk.text}
@@ -495,7 +494,8 @@ IMPORTANT FORMATTING RULES:
 - Each question MUST be followed by "OPTIONS:" on the next line
 - Options MUST be labeled A., B., C., D., E. (one per line)
 - Then "ANSWER:" with a single letter (A, B, C, D, or E)
-- Then "EXPLANATION:" with 1-2 sentences
+- Then "EXPLANATION:" with 1-2 sentences explaining why the correct answer is right
+- Then "WHY_WRONG:" with 1 sentence each explaining why each incorrect option is wrong (format: "A: reason. B: reason." etc., skipping the correct answer)
 - Then "TAGS:" with 3-6 comma-separated keywords
 - Then "PAGE:" with the page range
 
@@ -508,11 +508,12 @@ C. Morphine
 D. Ibuprofen
 E. Dexamethasone
 ANSWER: B
-EXPLANATION: Gabapentin is first-line for neuropathic pain based on RCT evidence.
+EXPLANATION: Gabapentin is first-line for neuropathic pain based on RCT evidence showing superior efficacy for neuropathic mechanisms.
+WHY_WRONG: A: Paracetamol acts on nociceptive pain and has no established efficacy for neuropathic mechanisms. C: Morphine is used for moderate-severe nociceptive pain and is not first-line for neuropathic pain. D: Ibuprofen is an NSAID effective for inflammatory pain, not neuropathic pain. E: Dexamethasone is used as an adjuvant for specific pain types but not first-line for neuropathic pain.
 TAGS: neuropathic-pain, gabapentin, first-line-treatment
 PAGE: ${chunk.start}-${chunk.end}
 
-Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
+Now generate ${batchSize} questions following this EXACT format.`;
 
     if (DEBUG_MODE) {
       console.log('Sending prompt (first 500 chars):', prompt.substring(0, 500));
@@ -547,7 +548,6 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
       return data;
     });
     
-    // Extract text from various possible response formats
     let text = '';
     if (result.content) {
       if (Array.isArray(result.content)) {
@@ -573,10 +573,9 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
     const questions = parseResponse(text);
     
     if (!questions || questions.length === 0) {
-      // Save the failed response for debugging
       if (DEBUG_MODE) {
         const debugInfo = {
-          timestamp: new Date().toISOString(),
+          timestamp: nowESTISO(),
           chunkId: chunk.id,
           promptLength: prompt.length,
           responseLength: text.length,
@@ -589,7 +588,6 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
       throw new Error(`Failed to parse any valid questions from API response. Received ${text.length} chars. Check console for details.`);
     }
     
-    // Filter out duplicates
     const uniqueQuestions = [];
     for (const q of questions) {
       if (q && q.question && !isDuplicate(q, existingCards) && 
@@ -618,7 +616,7 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
     return { questions: uniqueQuestions, fromCache: false };
   }
 
-  // Theme (simplified with defensive checks)
+  // Theme
   const Theme = {
     apply(pref) {
       const root = document.documentElement;
@@ -685,7 +683,7 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
     },
   };
 
-  // Topic Grid (simplified)
+  // Topic Grid
   const TopicGrid = {
     activeFilter: 'all',
     init() {
@@ -747,16 +745,26 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
         grid.appendChild(card);
       });
     },
+    // FIX #2: update due badge colour — green when 0, red when >0
     updateDueBadge() {
       const due = Store.srs.dueCards().length;
       const badge = document.getElementById('due-count');
-      if (badge) badge.textContent = due>0?due:'';
+      const navBtn = document.querySelector('.nav-btn[data-view="due"]');
+      if (badge) {
+        badge.textContent = due > 0 ? due : '0';
+        badge.style.display = 'inline-flex';
+        badge.className = due > 0 ? 'due-badge due-badge-red' : 'due-badge due-badge-green';
+      }
+      if (navBtn) {
+        navBtn.classList.toggle('nav-btn-due-clear', due === 0);
+      }
     },
   };
 
-  // Quiz (simplified - keeping existing implementation but using updated callAPI)
+  // Quiz
   const Quiz = {
     currentChunk: null,
+    currentCard: null,  // FIX #5: track current card for bad-card deletion
     pendingQueue: [],
 
     async generate(chunkId) {
@@ -772,21 +780,21 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
       if (loadingEl) loadingEl.textContent = `Ch. ${chunk.chapter}: ${chunk.title}`;
       try {
         const cached = QuestionCache.get(chunk.id)||[];
-        const savedQs = new Set(Store.cards.forChunk(chunk.id).map(c=>c.question));
-        const unseen = cached.filter(q=>!savedQs.has(q.question));
+        const existing = Store.cards.forChunk(chunk.id);
+        const unseen = cached.filter(q => !isDuplicate(q, existing));
         
         if (unseen.length > 0) {
           this.pendingQueue = unseen.slice(1);
           this._present(unseen[0], chunk, true);
         } else {
           const {questions,fromCache} = await callAPI(chunk);
-          const existing = Store.cards.forChunk(chunk.id);
+          const existingCards = Store.cards.forChunk(chunk.id);
           
           let fresh;
-          if (!existing.length) {
+          if (!existingCards.length) {
             fresh = questions;
           } else {
-            fresh = questions.filter(q => !isDuplicate(q, existing));
+            fresh = questions.filter(q => !isDuplicate(q, existingCards));
           }
 
           if (!fresh || !fresh.length) throw new Error('All generated questions were duplicates. Try another topic.');
@@ -804,6 +812,7 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
 
     _present(q, chunk, fromCache) {
       if (!q || !chunk) return;
+      this.currentCard = q;  // FIX #5: track for bad-card button
       this._showState('content');
       const ansCard = document.getElementById('ans-card');
       const savedNote = document.getElementById('saved-note');
@@ -813,6 +822,11 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
       if (qHint) qHint.style.display = 'block';
       const srButtons = document.getElementById('sr-buttons');
       if (srButtons) srButtons.style.display = 'none';
+
+      // Hide bad-card button until answer is revealed
+      const badCardBtn = document.getElementById('bad-card-btn');
+      if (badCardBtn) badCardBtn.style.display = 'none';
+
       const cacheLabel = fromCache?' · ⚡ cached':'';
       const qTag = document.getElementById('q-tag');
       if (qTag) {
@@ -833,21 +847,22 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
           optsDiv.appendChild(btn);
         });
       }
+
+      // FIX #4/#1: Next Question vs Generate More buttons
       const nextBtn = document.getElementById('next-btn');
       const generateBtn = document.getElementById('generate-btn');
-      
-      const queueLen = this.pendingQueue.filter(pq => 
-        !isDuplicate(pq, Store.cards.forChunk(chunk.id))
+
+      const queueLen = this.pendingQueue.filter(
+        pq => !isDuplicate(pq, Store.cards.forChunk(chunk.id))
       ).length;
 
       if (nextBtn) {
         if (queueLen > 0) {
-          // Show "Next Question" with count badge
           nextBtn.style.display = 'inline-flex';
-          nextBtn.innerHTML = `Next Question <span class="cache-count-badge">${queueLen}</span>`;
+          nextBtn.innerHTML = `Next <span class="cache-count-badge">${queueLen}</span>`;
           nextBtn.onclick = () => {
-            const existing = Store.cards.forChunk(chunk.id);
-            const next = this.pendingQueue.find(q => !isDuplicate(q, existing));
+            const existingNow = Store.cards.forChunk(chunk.id);
+            const next = this.pendingQueue.find(pq => !isDuplicate(pq, existingNow));
             if (next) {
               this.pendingQueue = this.pendingQueue.filter(q2 => q2 !== next);
               this._present(next, chunk, true);
@@ -856,7 +871,6 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
             }
           };
         } else {
-          // No cached questions left — hide this button
           nextBtn.style.display = 'none';
         }
       }
@@ -866,6 +880,9 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
         generateBtn.textContent = 'Generate More';
         generateBtn.onclick = () => this.generate(chunk.id);
       }
+
+      const sameTopicBtn = document.getElementById('same-topic-btn');
+      if (sameTopicBtn) sameTopicBtn.onclick = ()=>this.generate(chunk.id);
     },
 
     _answer(letter, q, chunk) {
@@ -886,12 +903,21 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
         title.className = 'ans-title '+(isCorrect?'ok':'bad');
       }
       const explanation = document.getElementById('ans-explanation');
-      if (explanation) explanation.textContent = q.explanation;
+      if (explanation) {
+        // FIX #3: show explanation + why wrong distractors
+        let fullExpl = q.explanation || '';
+        if (q.whyWrong) {
+          fullExpl += `\n\n💡 Why others are wrong:\n${q.whyWrong}`;
+        }
+        explanation.textContent = fullExpl;
+      }
       let srcHtml=`📚 ${q.source}<br>📄 Pages: ${q.pages}`;
       if (q.tags?.length) srcHtml+=`<br>🏷 ${q.tags.slice(0,6).join(' · ')}`;
       const source = document.getElementById('ans-source');
       if (source) source.innerHTML = srcHtml;
+
       const cardId = this._save(q, chunk);
+
       const intervals = SM2.previewIntervals(Store.srs.get(cardId));
       const hardDays = document.getElementById('sr-hard-days');
       const goodDays = document.getElementById('sr-good-days');
@@ -904,6 +930,28 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
       document.querySelectorAll('#sr-buttons .sr-btn').forEach(btn=>{
         btn.onclick=()=>{ Store.srs.review(cardId,parseInt(btn.dataset.rating)); if(srButtons) srButtons.style.display='none'; };
       });
+
+      // FIX #5: show bad-card button after answer, wire up deletion
+      const badCardBtn = document.getElementById('bad-card-btn');
+      if (badCardBtn) {
+        badCardBtn.style.display = 'inline-flex';
+        badCardBtn.onclick = () => {
+          if (confirm('Delete this card? It will be removed from your deck and cannot be recovered.')) {
+            Store.cards.delete(cardId);
+            Store.srs.set(cardId, undefined); // remove SRS state
+            // Also remove from cache so it won't reappear
+            const chunkCache = QuestionCache.get(chunk.id) || [];
+            const filtered = chunkCache.filter(cq => cq.question !== q.question);
+            QuestionCache.set(chunk.id, filtered);
+            badCardBtn.style.display = 'none';
+            const savedNote = document.getElementById('saved-note');
+            if (savedNote) savedNote.style.display = 'none';
+            TopicGrid.render();
+            TopicGrid.updateDueBadge();
+          }
+        };
+      }
+
       Store.sessionStats.record(isCorrect,{chunkId:chunk.id,chapterTitle:chunk.title,question:q.question,correct:isCorrect,answer:q.answer,selected:letter});
       Store.stats.record(chunk.id,isCorrect);
       this._updateStreak();
@@ -914,10 +962,14 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
       const ex = Store.cards.forChunk(chunk.id).find(c=>c.question===q.question);
       if (ex) return ex.id;
       const id = 'card_'+chunk.id+'_'+Date.now();
-      Store.cards.save({id,chunkId:chunk.id,chapterTitle:chunk.title,chapter:chunk.chapter,
-        pages:q.pages||`${chunk.start}-${chunk.end}`,question:q.question,options:q.options,
-        answer:q.answer,explanation:q.explanation,tags:q.tags||[],source:q.source,
-        createdAt:new Date().toISOString()});
+      Store.cards.save({
+        id, chunkId:chunk.id, chapterTitle:chunk.title, chapter:chunk.chapter,
+        pages:q.pages||`${chunk.start}-${chunk.end}`, question:q.question,
+        options:q.options, answer:q.answer, explanation:q.explanation,
+        whyWrong: q.whyWrong || '',
+        tags:q.tags||[], source:q.source,
+        createdAt: nowESTISO()  // FIX #6: use EST
+      });
       const savedNote = document.getElementById('saved-note');
       if (savedNote) savedNote.style.display='block';
       return id;
@@ -948,7 +1000,7 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
     },
   };
 
-  // Due Study Mode (keep existing implementation)
+  // Due Study Mode
   const DueStudy = {
     queue:[], index:0,
     start() {
@@ -958,6 +1010,11 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
       const content = document.getElementById('due-content');
       if (empty) empty.style.display = hasCards?'none':'block';
       if (content) content.style.display = hasCards?'block':'none';
+      // FIX #1: wire up go-topics-btn (empty state) and due-back-topics-btn (always visible)
+      const goTopicsBtn = document.getElementById('go-topics-btn');
+      if (goTopicsBtn) goTopicsBtn.onclick = () => Nav.show('home');
+      const dueBackBtn = document.getElementById('due-back-topics-btn');
+      if (dueBackBtn) dueBackBtn.onclick = () => Nav.show('home');
       if (hasCards) this._show();
     },
     _show() {
@@ -972,6 +1029,11 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
       if (ansCard) ansCard.style.display='none';
       const hint = document.getElementById('due-hint');
       if (hint) hint.style.display='block';
+
+      // FIX #5: hide bad-card button for due study until answered
+      const dueBadCardBtn = document.getElementById('due-bad-card-btn');
+      if (dueBadCardBtn) dueBadCardBtn.style.display = 'none';
+
       const tag = document.getElementById('due-tag');
       if (tag) tag.textContent = `📖 Ch. ${card.chapter} · ${card.chapterTitle} · pp.${card.pages}`;
       const qText = document.getElementById('due-q-text');
@@ -1006,7 +1068,14 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
         title.className='ans-title '+(isCorrect?'ok':'bad');
       }
       const explanation = document.getElementById('due-explanation');
-      if (explanation) explanation.textContent=card.explanation;
+      if (explanation) {
+        // FIX #3: show why wrong in due study too
+        let fullExpl = card.explanation || '';
+        if (card.whyWrong) {
+          fullExpl += `\n\n💡 Why others are wrong:\n${card.whyWrong}`;
+        }
+        explanation.textContent = fullExpl;
+      }
       let srcHtml=`📚 ${card.source}<br>📄 Pages: ${card.pages}`;
       if (card.tags?.length) srcHtml+=`<br>🏷 ${card.tags.slice(0,5).join(' · ')}`;
       const source = document.getElementById('due-source');
@@ -1018,12 +1087,47 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
       if (hardDays) hardDays.textContent=SM2.intervalLabel(intervals[2]);
       if (goodDays) goodDays.textContent=SM2.intervalLabel(intervals[3]);
       if (easyDays) easyDays.textContent=SM2.intervalLabel(intervals[4]);
+
       Store.sessionStats.record(isCorrect,{chunkId:card.chunkId,chapterTitle:card.chapterTitle,question:card.question,correct:isCorrect,answer:card.answer,selected:letter});
       Store.stats.record(card.chunkId,isCorrect);
+
+      // FIX #5: bad-card button in due study
+      const dueBadCardBtn = document.getElementById('due-bad-card-btn');
+      if (dueBadCardBtn) {
+        dueBadCardBtn.style.display = 'inline-flex';
+        dueBadCardBtn.onclick = () => {
+          if (confirm('Delete this card? It will be removed from your deck and cannot be recovered.')) {
+            Store.cards.delete(card.id);
+            Store.srs.set(card.id, undefined);
+            // Remove from cache
+            const chunkCache = QuestionCache.get(card.chunkId) || [];
+            const filtered = chunkCache.filter(cq => cq.question !== card.question);
+            QuestionCache.set(card.chunkId, filtered);
+            dueBadCardBtn.style.display = 'none';
+            // Advance to next card
+            this.queue.splice(this.index, 1);
+            TopicGrid.render();
+            TopicGrid.updateDueBadge();
+            if (this.queue.length === 0) {
+              this.start();
+            } else {
+              if (this.index >= this.queue.length) this.index = 0;
+              this._show();
+            }
+          }
+        };
+      }
+
       const advance=(rating)=>{
         Store.srs.review(card.id,rating);
         this.index++;
-        if (this.index>=this.queue.length) this.start(); else this._show();
+        if (this.index>=this.queue.length) {
+          // FIX #2: refresh badge when deck is complete
+          TopicGrid.updateDueBadge();
+          this.start();
+        } else {
+          this._show();
+        }
         TopicGrid.updateDueBadge();
       };
       const sr1 = document.getElementById('due-sr-1');
@@ -1037,11 +1141,10 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
     },
   };
 
-  // History (simplified)
+  // History
   const History = {
     activeTab:'session',
     init() {
-          // Tab switching
       document.querySelectorAll('.tab-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
@@ -1054,11 +1157,9 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
         });
       });
       
-      // Export button (now in header)
       const exportBtn = document.getElementById('export-btn');
       if (exportBtn) exportBtn.addEventListener('click', () => this._export());
       
-      // Import button (now in header)
       const importBtn = document.getElementById('import-btn');
       const importFile = document.getElementById('import-file');
       if (importBtn && importFile) {
@@ -1066,7 +1167,6 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
         importFile.addEventListener('change', (e) => this._import(e));
       }
       
-      // Clear saved button (still in History tab)
       const clearBtn = document.getElementById('clear-saved-btn');
       if (clearBtn) {
         clearBtn.addEventListener('click', () => {
@@ -1078,7 +1178,6 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
         });
       }
       
-      // Search input
       const savedSearch = document.getElementById('saved-search');
       if (savedSearch) savedSearch.addEventListener('input', () => this._renderSaved());
     },
@@ -1133,6 +1232,7 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
             <summary>Answer: ${card.answer}</summary>
             <div class="saved-opts">${(card.options||[]).join('<br>')}</div>
             <div class="saved-expl">${card.explanation}</div>
+            ${card.whyWrong ? `<div class="saved-expl" style="margin-top:8px;opacity:0.8">💡 ${card.whyWrong}</div>` : ''}
             <div class="saved-source">📄 ${card.source} · Pages ${card.pages}</div>
           </details></div>`;
       }).join('');
@@ -1159,11 +1259,12 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
         ${weakest.length?`<div class="stat-card wide"><div class="stat-lbl" style="margin-bottom:8px;font-weight:500">Weakest chapters (≥3 attempts)</div>${weakest.map(([id,d])=>{const sec=SECTIONS?.find(s=>s.id===id);return`<div class="weak-row"><span>${sec?.title||id}</span><span class="weak-pct">${Math.round(d.correct/d.answered*100)}% (${d.correct}/${d.answered})</span></div>`;}).join('')}</div>`:''}`;
     },
     _export() {
-      const data={version:2,exportDate:new Date().toISOString(),cards:Store.cards.list(),srsStates:Store.srs.all(),questionCache:QuestionCache.all()};
+      const data={version:2,exportDate:nowESTISO(),cards:Store.cards.list(),srsStates:Store.srs.all(),questionCache:QuestionCache.all()};
       const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
       const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-      a.download=`oxford-pallcare-${new Date().toISOString().slice(0,10)}.json`; a.click();
+      a.download=`oxford-pallcare-${todayEST()}.json`; a.click();
     },
+
     _import(e) {
       const file = e.target.files[0];
       if (!file) return;
@@ -1173,71 +1274,56 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
         try {
           const data = JSON.parse(evt.target.result);
 
-          // Basic validation
           if (!data.cards || !Array.isArray(data.cards)) {
             alert('Invalid file: no cards array found.');
             return;
           }
 
-          // --- 1. IMPORT CARDS ---
+          // 1. IMPORT CARDS
           let importedCards = 0;
           let skippedCards = 0;
           const existingCards = Store.cards.list();
 
           data.cards.forEach(card => {
-            // Skip if exact ID already exists
             const idExists = existingCards.some(c => c.id === card.id);
             if (idExists) { skippedCards++; return; }
-
-            // Skip fuzzy duplicates (same question, different ID)
             const isDup = isDuplicate(card, existingCards);
             if (isDup) { skippedCards++; return; }
-
             Store.cards.save(card);
-            existingCards.push(card); // keep local list fresh for subsequent checks
+            existingCards.push(card);
             importedCards++;
           });
 
-          // --- 2. IMPORT SRS STATES ---
+          // 2. IMPORT SRS STATES
           if (data.srsStates && typeof data.srsStates === 'object') {
             Object.entries(data.srsStates).forEach(([cardId, state]) => {
-              // Only import SRS for cards that actually exist now
               if (Store.cards.list().some(c => c.id === cardId)) {
                 Store.srs.set(cardId, state);
               }
             });
           }
 
-          // --- 3. MERGE QUESTION CACHE ---
-          // The cache is also long-term memory — merge it, don't overwrite
+          // 3. MERGE QUESTION CACHE
           if (data.questionCache && typeof data.questionCache === 'object') {
             const allImportedCards = Store.cards.list();
-
             Object.entries(data.questionCache).forEach(([chunkId, questions]) => {
-              const existing = Store.cards.forChunk(chunkId);
-              const currentCache = Store.questionCache.get(chunkId) || [];
-
-              // Filter out questions already saved as cards or in current cache
+              const currentCache = QuestionCache.get(chunkId) || [];
               const newCacheQuestions = questions.filter(q => {
                 const savedAsDuplicate = isDuplicate(q, allImportedCards);
                 const alreadyInCache = currentCache.some(c => c.question === q.question);
                 return !savedAsDuplicate && !alreadyInCache;
               });
-
-              // Merge with existing cache
               const merged = [...currentCache, ...newCacheQuestions];
               if (merged.length > 0) {
-                Store.questionCache.set(chunkId, merged);
+                QuestionCache.set(chunkId, merged);
               }
             });
           }
 
-          // --- 4. REFRESH UI ---
+          // 4. REFRESH UI
           TopicGrid.render();
           TopicGrid.updateDueBadge();
           this.render();
-
-          // Reset file input so the same file can be re-imported if needed
           e.target.value = '';
 
           alert(
@@ -1271,6 +1357,21 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
         dailyReviewLimit.value=s.dailyReviewLimit;
         dailyReviewLimit.addEventListener('change',e=>Store.settings.set({dailyReviewLimit:+e.target.value}));
       }
+
+      // FIX #4: batch size setting
+      const batchSizeInput = document.getElementById('batch-size-input');
+      if (batchSizeInput) {
+        batchSizeInput.value = s.batchSize || BATCH_SIZE_DEFAULT;
+        batchSizeInput.addEventListener('change', e => {
+          const val = Math.min(10, Math.max(1, +e.target.value));
+          batchSizeInput.value = val;
+          BATCH_SIZE_DEFAULT = val;
+          Store.settings.set({ batchSize: val });
+        });
+        // Apply saved setting on load
+        if (s.batchSize) BATCH_SIZE_DEFAULT = s.batchSize;
+      }
+
       const resetApiBtn = document.getElementById('reset-api-btn');
       if(resetApiBtn) resetApiBtn.addEventListener('click',()=>{ Store.api.reset(); ApiBadge.update(); });
       const clearCacheBtn = document.getElementById('clear-cache-btn');
@@ -1308,12 +1409,10 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
   return { init };
 })();
 
-// Wait for DOM and SECTIONS data
 if (typeof SECTIONS !== 'undefined') {
   document.addEventListener('DOMContentLoaded', App.init);
 } else {
   console.error('SECTIONS not defined. Make sure sections.js loads first.');
-  // Try again after a short delay
   window.addEventListener('load', () => {
     if (typeof SECTIONS !== 'undefined') {
       document.addEventListener('DOMContentLoaded', App.init);
