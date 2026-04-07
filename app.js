@@ -1215,7 +1215,7 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
 
             Object.entries(data.questionCache).forEach(([chunkId, questions]) => {
               const existing = Store.cards.forChunk(chunkId);
-              const currentCache = QuestionCache.get(chunkId) || [];
+              const currentCache = Store.questionCache.get(chunkId) || [];
 
               // Filter out questions already saved as cards or in current cache
               const newCacheQuestions = questions.filter(q => {
@@ -1227,7 +1227,7 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
               // Merge with existing cache
               const merged = [...currentCache, ...newCacheQuestions];
               if (merged.length > 0) {
-                QuestionCache.set(chunkId, merged);
+                Store.questionCache.set(chunkId, merged);
               }
             });
           }
