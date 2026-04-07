@@ -1,7 +1,6 @@
 // Oxford Palliative Medicine — Main App (Optimized for API Credits)
 // Set this to your Cloudflare Worker URL after deploying worker/worker.js
 const API_PROXY_URL = 'https://oxfordpal-api.hello-henryhe.workers.dev';
-console.log("AUTO DEPLOY TEST — OPTIMIZED VERSION WITH DEBUGGING");
 
 // Constants
 const FREE_WINDOW_ESTIMATE = 25;
@@ -431,8 +430,6 @@ const App = (() => {
     return validQuestions;
   }
 
-  console.log("CALLING API", API_PROXY_URL);
-
   function debugAPIResponse(text, chunkId) {
     console.log(`=== DEBUG: API Response for ${chunkId} ===`);
     console.log('Raw response length:', text.length);
@@ -528,7 +525,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
       });
       
       Store.api.recordCall();
-      ApiBadge.update();
       
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
@@ -659,23 +655,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
       if (btn) btn.classList.add('active');
       if (name==='history') History.render();
       if (name==='due') DueStudy.start();
-    },
-  };
-
-  // API Badge
-  const ApiBadge = {
-    update() {
-      const rem = Store.api.remaining();
-      const el = document.getElementById('api-count');
-      const badge = document.getElementById('api-badge');
-      if (el) el.textContent = rem;
-      if (badge) badge.className = 'api-badge'+(rem<=5?' api-low':rem<=12?' api-med':'');
-      const reset = Store.api.nextReset();
-      const resetEl = document.getElementById('api-reset');
-      if (resetEl && reset) {
-        const diff = reset - Date.now();
-        resetEl.textContent = `resets ${Math.floor(diff/3600000)}h${Math.floor((diff%3600000)/60000)}m`;
-      } else if (resetEl) resetEl.textContent = '';
     },
   };
 
@@ -1441,11 +1420,9 @@ Now generate ${batchSize} questions following this EXACT format.`;
       return;
     }
     Theme.init(); Nav.init(); TopicGrid.init(); Quiz.initActions();
-    History.init(); Settings.init(); ApiBadge.update();
+    History.init(); Settings.init();
     AutoSave.init();
-    setInterval(ApiBadge.update.bind(ApiBadge),60000);
     TopicGrid.updateDueBadge();
-    console.log('✅ App loaded with auto-save enabled');
   }
 
   return { init };
