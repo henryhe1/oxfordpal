@@ -469,3 +469,17 @@ body {
 }
 .cached-dot { color: #4466cc; font-size: 10px; }
 .weak-pct { color: var(--red-text); font-weight: 500; }
+
+/* Cache Count */
+.cache-count-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,0.25);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  margin-left: 6px;
+  min-width: 20px;
+}

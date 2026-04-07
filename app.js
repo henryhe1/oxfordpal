@@ -834,18 +834,38 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
         });
       }
       const nextBtn = document.getElementById('next-btn');
+      const generateBtn = document.getElementById('generate-btn');
+      
+      const queueLen = this.pendingQueue.filter(pq => 
+        !isDuplicate(pq, Store.cards.forChunk(chunk.id))
+      ).length;
+
       if (nextBtn) {
-        nextBtn.onclick = ()=>{
-          if (this.pendingQueue.length>0) {
+        if (queueLen > 0) {
+          // Show "Next Question" with count badge
+          nextBtn.style.display = 'inline-flex';
+          nextBtn.innerHTML = `Next Question <span class="cache-count-badge">${queueLen}</span>`;
+          nextBtn.onclick = () => {
             const existing = Store.cards.forChunk(chunk.id);
-            const next = this.pendingQueue.find(q=>!isDuplicate(q,existing));
-            if (next) { this.pendingQueue=this.pendingQueue.filter(q2=>q2!==next); this._present(next,chunk,true); return; }
-          }
-          this.generate();
-        };
+            const next = this.pendingQueue.find(q => !isDuplicate(q, existing));
+            if (next) {
+              this.pendingQueue = this.pendingQueue.filter(q2 => q2 !== next);
+              this._present(next, chunk, true);
+            } else {
+              this.generate();
+            }
+          };
+        } else {
+          // No cached questions left — hide this button
+          nextBtn.style.display = 'none';
+        }
       }
-      const sameTopicBtn = document.getElementById('same-topic-btn');
-      if (sameTopicBtn) sameTopicBtn.onclick = ()=>this.generate(chunk.id);
+
+      if (generateBtn) {
+        generateBtn.style.display = 'inline-flex';
+        generateBtn.textContent = 'Generate More';
+        generateBtn.onclick = () => this.generate(chunk.id);
+      }
     },
 
     _answer(letter, q, chunk) {
@@ -1143,6 +1163,97 @@ Now generate ${BATCH_SIZE_DEFAULT} questions following this EXACT format.`;
       const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
       const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
       a.download=`oxford-pallcare-${new Date().toISOString().slice(0,10)}.json`; a.click();
+    },
+    _import(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        try {
+          const data = JSON.parse(evt.target.result);
+
+          // Basic validation
+          if (!data.cards || !Array.isArray(data.cards)) {
+            alert('Invalid file: no cards array found.');
+            return;
+          }
+
+          // --- 1. IMPORT CARDS ---
+          let importedCards = 0;
+          let skippedCards = 0;
+          const existingCards = Store.cards.list();
+
+          data.cards.forEach(card => {
+            // Skip if exact ID already exists
+            const idExists = existingCards.some(c => c.id === card.id);
+            if (idExists) { skippedCards++; return; }
+
+            // Skip fuzzy duplicates (same question, different ID)
+            const isDup = isDuplicate(card, existingCards);
+            if (isDup) { skippedCards++; return; }
+
+            Store.cards.save(card);
+            existingCards.push(card); // keep local list fresh for subsequent checks
+            importedCards++;
+          });
+
+          // --- 2. IMPORT SRS STATES ---
+          if (data.srsStates && typeof data.srsStates === 'object') {
+            Object.entries(data.srsStates).forEach(([cardId, state]) => {
+              // Only import SRS for cards that actually exist now
+              if (Store.cards.list().some(c => c.id === cardId)) {
+                Store.srs.set(cardId, state);
+              }
+            });
+          }
+
+          // --- 3. MERGE QUESTION CACHE ---
+          // The cache is also long-term memory — merge it, don't overwrite
+          if (data.questionCache && typeof data.questionCache === 'object') {
+            const allImportedCards = Store.cards.list();
+
+            Object.entries(data.questionCache).forEach(([chunkId, questions]) => {
+              const existing = Store.cards.forChunk(chunkId);
+              const currentCache = QuestionCache.get(chunkId) || [];
+
+              // Filter out questions already saved as cards or in current cache
+              const newCacheQuestions = questions.filter(q => {
+                const savedAsDuplicate = isDuplicate(q, allImportedCards);
+                const alreadyInCache = currentCache.some(c => c.question === q.question);
+                return !savedAsDuplicate && !alreadyInCache;
+              });
+
+              // Merge with existing cache
+              const merged = [...currentCache, ...newCacheQuestions];
+              if (merged.length > 0) {
+                QuestionCache.set(chunkId, merged);
+              }
+            });
+          }
+
+          // --- 4. REFRESH UI ---
+          TopicGrid.render();
+          TopicGrid.updateDueBadge();
+          this.render();
+
+          // Reset file input so the same file can be re-imported if needed
+          e.target.value = '';
+
+          alert(
+            `Import complete:\n` +
+            `✓ ${importedCards} cards imported\n` +
+            `⊘ ${skippedCards} duplicates skipped\n` +
+            `📦 Cache merged for ${Object.keys(data.questionCache || {}).length} chunks`
+          );
+
+        } catch (err) {
+          console.error('Import failed:', err);
+          alert('Import failed: ' + err.message);
+        }
+      };
+
+      reader.readAsText(file);
     },
   };
 
