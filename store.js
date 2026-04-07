@@ -23,14 +23,12 @@ const Store = (() => {
     set(cardId,state)  { const a=this.all(); a[cardId]=state; set('srs',a); },
     review(cardId,rating) { const u=SM2.review(this.get(cardId),rating); this.set(cardId,u); return u; },
     
-    // FIXED: dueCards now uses Store.cards.list() instead of this.list()
     dueCards() {
-      const allCards = cards.list();  // ← FIXED: use cards.list(), not this.list()
+      const allCards = cards.list();  // ← FIXED: use cards.list()
       const due = [];
       
       for (const card of allCards) {
         const srsData = this.get(card.id);
-        // Only include cards that have been reviewed (have a dueDate)
         if (srsData && srsData.dueDate) {
           const today = new Date();
           today.setHours(0, 0, 0, 0);
@@ -43,7 +41,6 @@ const Store = (() => {
         }
       }
       
-      // Sort by due date (oldest first)
       due.sort((a, b) => {
         const srsA = this.get(a.id);
         const srsB = this.get(b.id);
@@ -61,6 +58,14 @@ const Store = (() => {
     set(chunkId,qs){ const a=this.all(); a[chunkId]=qs; set('qcache',a); },
     clear()        { set('qcache',{}); },
     size()         { return Object.keys(this.all()).length; },
+  };
+
+  // API call tracking (simplified - no badge display needed)
+  const api = {
+    recordCall() { return; },
+    remaining() { return 999; },
+    nextReset() { return null; },
+    reset() {},
   };
 
   // Settings

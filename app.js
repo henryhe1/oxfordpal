@@ -523,8 +523,6 @@ Now generate ${batchSize} questions following this EXACT format.`;
         }),
       });
       
-      Store.api.recordCall();
-      
       const data = await res.json();
       if (data.error) throw new Error(data.error.message);
       
