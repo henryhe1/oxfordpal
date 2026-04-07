@@ -210,6 +210,8 @@ body {
   font-size: 10px; min-width: 16px; height: 16px;
   margin-left: 3px; vertical-align: middle;
 }
+.due-badge-red { background:red; }
+.due-badge-green { background:green;}
 
 .theme-toggle {
   background: transparent; border: 1px solid var(--border);
