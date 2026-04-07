@@ -3,7 +3,6 @@
 const API_PROXY_URL = 'https://oxfordpal-api.hello-henryhe.workers.dev';
 
 // Constants
-const FREE_WINDOW_ESTIMATE = 25;
 let BATCH_SIZE_DEFAULT = 5; // User configurable batch size
 const SIMILARITY_THRESHOLD = 0.55;
 const MAX_CARDS_PER_CHUNK = 15;

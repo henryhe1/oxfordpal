@@ -19,22 +19,22 @@ const Store = (() => {
   // SRS — SM2 state per card.id
   const srs = {
     all()              { return get('srs')||{}; },
-    get(cardId)        { return (this.all())[cardId]||SM2.newCard(); },
+    get(cardId)        { return (this.all())[cardId] || SM2.newCard(); },
     set(cardId,state)  { const a=this.all(); a[cardId]=state; set('srs',a); },
     review(cardId,rating) { const u=SM2.review(this.get(cardId),rating); this.set(cardId,u); return u; },
+    
+    // FIXED: dueCards now uses Store.cards.list() instead of this.list()
     dueCards() {
-      const allCards = this.list();
+      const allCards = cards.list();  // ← FIXED: use cards.list(), not this.list()
       const due = [];
       
       for (const card of allCards) {
-        const srs = this.get(card.id);
-        // A card is due if:
-        // 1. It has no SRS state (new card - but new cards shouldn't appear in due study)
-        // 2. OR it has a dueDate that is today or earlier
-        if (srs && srs.dueDate) {
+        const srsData = this.get(card.id);
+        // Only include cards that have been reviewed (have a dueDate)
+        if (srsData && srsData.dueDate) {
           const today = new Date();
           today.setHours(0, 0, 0, 0);
-          const dueDate = new Date(srs.dueDate);
+          const dueDate = new Date(srsData.dueDate);
           dueDate.setHours(0, 0, 0, 0);
           
           if (dueDate <= today) {
@@ -63,29 +63,6 @@ const Store = (() => {
     size()         { return Object.keys(this.all()).length; },
   };
 
-  // API call tracking — rolling 5-hour window
-  const WINDOW_MS = 5*60*60*1000;
-  const FREE_ESTIMATE = 25;
-  const api = {
-    _data()   { return get('api')||{calls:[]}; },
-    _save(d)  { set('api',d); },
-    recordCall() { const d=this._data(); d.calls.push(Date.now()); this._save(d); },
-    remaining() {
-      const d=this._data();
-      const cutoff=Date.now()-WINDOW_MS;
-      d.calls=d.calls.filter(t=>t>cutoff);
-      this._save(d);
-      return Math.max(0, FREE_ESTIMATE-d.calls.length);
-    },
-    nextReset() {
-      const d=this._data();
-      const live=d.calls.filter(t=>t>Date.now()-WINDOW_MS);
-      if (!live.length) return null;
-      return new Date(Math.min(...live)+WINDOW_MS);
-    },
-    reset() { this._save({calls:[]}); },
-  };
-
   // Settings
   const settings = {
     defaults: {theme:'auto',dailyNewLimit:10,dailyReviewLimit:50},
@@ -97,8 +74,14 @@ const Store = (() => {
   const sessionStats = {
     answered:0, correct:0, streak:0, history:[],
     record(isCorrect,entry) {
-      this.answered++; this.history.unshift(entry);
-      if (isCorrect){this.correct++;this.streak++;} else {this.streak=0;}
+      this.answered++; 
+      this.history.unshift(entry);
+      if (isCorrect){
+        this.correct++;
+        this.streak++;
+      } else { 
+        this.streak=0;
+      }
     },
     pct() { return this.answered?Math.round(this.correct/this.answered*100):0; },
   };
